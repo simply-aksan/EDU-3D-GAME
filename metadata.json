@@ -1,0 +1,6 @@
+{
+  "name": "EDUVERSE 3D — Dunia Edukasi Interaktif",
+  "description": "Platform web game edukasi 3D interaktif berkinerja tinggi dengan 5 dunia biom, kustomisasi karakter 3D, 20 slot mini-game (6 mode utama siap main), dan Universal Question Engine.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
