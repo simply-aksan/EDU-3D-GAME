@@ -4,6 +4,10 @@ import {
   CostumeUniformId,
   UNIFORM_ITEMS
 } from './questions';
+import {
+  attachInteractiveRimGlow,
+  MaterialLibrary
+} from './GraphicsEngine';
 
 // Shared procedural CanvasTexture generator for crisp signs, gates, and labels
 export function createSignTexture(
@@ -73,10 +77,11 @@ export function createContactShadowMesh(radius = 1.1): THREE.Mesh {
   return mesh;
 }
 
-// 1. Composite 10-part Procedural Student Avatar (Grounded at Y=0)
+// 1. Composite 10-part Procedural Student Avatar (Grounded at Y=0, upgraded with Clearcoat & Glass)
 export function createStudentAvatar(
   uniformId: CostumeUniformId,
-  accessories: AccessoryId[]
+  accessories: AccessoryId[],
+  materials?: MaterialLibrary
 ): THREE.Group {
   const root = new THREE.Group();
   root.name = 'StudentAvatar';
@@ -86,32 +91,38 @@ export function createStudentAvatar(
 
   const skinMat = new THREE.MeshStandardMaterial({
     color: 0xf4c29f,
-    roughness: 0.65,
+    roughness: 0.62,
     metalness: 0.05
   });
-  const shirtMat = new THREE.MeshStandardMaterial({
+  const shirtMat = new THREE.MeshPhysicalMaterial({
     color: uniformCfg.shirtColor,
-    roughness: 0.55,
-    metalness: 0.1
+    roughness: 0.52,
+    metalness: 0.08,
+    clearcoat: 0.18,
+    clearcoatRoughness: 0.35
   });
   const bottomMat = new THREE.MeshStandardMaterial({
     color: uniformCfg.bottomColor,
-    roughness: 0.75,
+    roughness: 0.72,
     metalness: 0.08
   });
-  const tieMat = new THREE.MeshStandardMaterial({
+  const tieMat = new THREE.MeshPhysicalMaterial({
     color: uniformCfg.tieColor,
-    roughness: 0.35,
-    metalness: 0.2
-  });
-  const shoeMat = new THREE.MeshStandardMaterial({
-    color: 0x1e293b,
     roughness: 0.3,
-    metalness: 0.25
+    metalness: 0.22,
+    clearcoat: 0.3,
+    clearcoatRoughness: 0.15
+  });
+  const shoeMat = new THREE.MeshPhysicalMaterial({
+    color: 0x1e293b,
+    roughness: 0.26,
+    metalness: 0.3,
+    clearcoat: 0.3,
+    clearcoatRoughness: 0.15
   });
   const hairMat = new THREE.MeshStandardMaterial({
     color: 0x18181b,
-    roughness: 0.8,
+    roughness: 0.78,
     metalness: 0.05
   });
 
@@ -129,11 +140,13 @@ export function createStudentAvatar(
   const leftLegMesh = new THREE.Mesh(legGeo, bottomMat);
   leftLegMesh.position.y = -0.3;
   leftLegMesh.castShadow = true;
+  leftLegMesh.receiveShadow = true;
   leftLegPivot.add(leftLegMesh);
 
   const shoeGeo = new THREE.BoxGeometry(0.32, 0.18, 0.42);
   const leftShoe = new THREE.Mesh(shoeGeo, shoeMat);
   leftShoe.position.set(0, -0.66, 0.06);
+  leftShoe.castShadow = true;
   leftLegPivot.add(leftShoe);
   bodyPivot.add(leftLegPivot);
 
@@ -143,10 +156,12 @@ export function createStudentAvatar(
   const rightLegMesh = new THREE.Mesh(legGeo, bottomMat);
   rightLegMesh.position.y = -0.3;
   rightLegMesh.castShadow = true;
+  rightLegMesh.receiveShadow = true;
   rightLegPivot.add(rightLegMesh);
 
   const rightShoe = new THREE.Mesh(shoeGeo, shoeMat);
   rightShoe.position.set(0, -0.66, 0.06);
+  rightShoe.castShadow = true;
   rightLegPivot.add(rightShoe);
   bodyPivot.add(rightLegPivot);
 
@@ -155,6 +170,7 @@ export function createStudentAvatar(
   const torso = new THREE.Mesh(torsoGeo, shirtMat);
   torso.position.y = 1.22;
   torso.castShadow = true;
+  torso.receiveShadow = true;
   bodyPivot.add(torso);
 
   // Tie / Scout Scarf / Batik Sash
@@ -191,6 +207,7 @@ export function createStudentAvatar(
   const headGeo = new THREE.BoxGeometry(0.76, 0.74, 0.72);
   const head = new THREE.Mesh(headGeo, skinMat);
   head.castShadow = true;
+  head.receiveShadow = true;
   headGroup.add(head);
 
   const hairTop = new THREE.Mesh(
@@ -198,6 +215,7 @@ export function createStudentAvatar(
     hairMat
   );
   hairTop.position.set(0, 0.34, -0.02);
+  hairTop.castShadow = true;
   headGroup.add(hairTop);
 
   const eyeMat = new THREE.MeshBasicMaterial({ color: 0x0f172a });
@@ -215,6 +233,7 @@ export function createStudentAvatar(
       bottomMat
     );
     capCrown.position.set(0, 0.48, 0);
+    capCrown.castShadow = true;
     const capVisor = new THREE.Mesh(
       new THREE.BoxGeometry(0.68, 0.06, 0.38),
       tieMat
@@ -236,10 +255,11 @@ export function createStudentAvatar(
   if (accessories.includes('blangkon')) {
     const crown = new THREE.Mesh(
       new THREE.CylinderGeometry(0.48, 0.42, 0.28, 8),
-      new THREE.MeshStandardMaterial({
+      new THREE.MeshPhysicalMaterial({
         color: 0xf59e0b,
         metalness: 0.75,
-        roughness: 0.2
+        roughness: 0.2,
+        clearcoat: 0.3
       })
     );
     crown.position.set(0, 0.52, 0);
@@ -247,14 +267,19 @@ export function createStudentAvatar(
   }
 
   if (accessories.includes('kacamata')) {
-    const frameMat = new THREE.MeshStandardMaterial({
-      color: 0x38bdf8,
-      metalness: 0.6,
-      roughness: 0.2
-    });
+    const lensMat = materials
+      ? materials.getGlassMaterial('avatar_glasses', 0x38bdf8, 0.78)
+      : new THREE.MeshPhysicalMaterial({
+          color: 0x38bdf8,
+          metalness: 0.3,
+          roughness: 0.1,
+          clearcoat: 0.5,
+          transparent: true,
+          opacity: 0.82
+        });
     const glassBar = new THREE.Mesh(
       new THREE.BoxGeometry(0.68, 0.18, 0.08),
-      frameMat
+      lensMat
     );
     glassBar.position.set(0, 0.05, 0.39);
     headGroup.add(glassBar);
@@ -263,10 +288,11 @@ export function createStudentAvatar(
   bodyPivot.add(headGroup);
 
   if (accessories.includes('tas_ransel')) {
-    const bagMat = new THREE.MeshStandardMaterial({
+    const bagMat = new THREE.MeshPhysicalMaterial({
       color: 0xea580c,
-      roughness: 0.6,
-      metalness: 0.1
+      roughness: 0.52,
+      metalness: 0.12,
+      clearcoat: 0.3
     });
     const bag = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.68, 0.32), bagMat);
     bag.position.set(0, 1.24, -0.38);
@@ -275,10 +301,11 @@ export function createStudentAvatar(
   }
 
   if (accessories.includes('jubah_juara')) {
-    const capeMat = new THREE.MeshStandardMaterial({
+    const capeMat = new THREE.MeshPhysicalMaterial({
       color: 0xdc2626,
-      roughness: 0.45,
-      metalness: 0.15,
+      roughness: 0.42,
+      metalness: 0.18,
+      clearcoat: 0.25,
       side: THREE.DoubleSide
     });
     const cape = new THREE.Mesh(
@@ -330,21 +357,22 @@ export function updateAvatarAnimation(
   }
 }
 
-// 2. Subject Building (8-part composite architectural landmark)
+// 2. Subject Building (9-part composite architectural landmark + Proximity Rim Glow)
 export function createSubjectBuilding(
   subject: string,
   subtitle: string,
   primaryHex: number,
   accentHex: string,
-  maxAnisotropy = 4
+  maxAnisotropy = 4,
+  materials?: MaterialLibrary
 ): THREE.Group {
   const group = new THREE.Group();
 
   // Foundation plinth
   const baseMat = new THREE.MeshStandardMaterial({
     color: 0x334155,
-    roughness: 0.85,
-    metalness: 0.1
+    roughness: 0.82,
+    metalness: 0.12
   });
   const base = new THREE.Mesh(new THREE.BoxGeometry(9.6, 0.6, 8.2), baseMat);
   base.position.y = 0.3;
@@ -352,10 +380,12 @@ export function createSubjectBuilding(
   group.add(base);
 
   // Main Hall Body
-  const wallMat = new THREE.MeshStandardMaterial({
+  const wallMat = new THREE.MeshPhysicalMaterial({
     color: primaryHex,
-    roughness: 0.6,
-    metalness: 0.15
+    roughness: 0.52,
+    metalness: 0.18,
+    clearcoat: 0.22,
+    clearcoatRoughness: 0.25
   });
   const body = new THREE.Mesh(new THREE.BoxGeometry(8.4, 5.4, 6.8), wallMat);
   body.position.y = 3.3;
@@ -364,24 +394,30 @@ export function createSubjectBuilding(
   group.add(body);
 
   // Roof Tier + Cornice
-  const roofMat = new THREE.MeshStandardMaterial({
+  const roofMat = new THREE.MeshPhysicalMaterial({
     color: 0x0f172a,
-    roughness: 0.35,
-    metalness: 0.45
+    roughness: 0.3,
+    metalness: 0.48,
+    clearcoat: 0.3
   });
   const roof = new THREE.Mesh(new THREE.BoxGeometry(9.2, 0.7, 7.6), roofMat);
   roof.position.y = 6.35;
   roof.castShadow = true;
+  roof.receiveShadow = true;
   group.add(roof);
 
-  const dome = new THREE.Mesh(
-    new THREE.ConeGeometry(3.4, 2.2, 4),
-    new THREE.MeshStandardMaterial({
-      color: primaryHex,
-      roughness: 0.3,
-      metalness: 0.5
-    })
-  );
+  // Transmissive Crystal Skylight Dome on Roof
+  const domeMat = materials
+    ? materials.getGlassMaterial(`dome_${subject}`, primaryHex, 0.8)
+    : new THREE.MeshPhysicalMaterial({
+        color: primaryHex,
+        roughness: 0.2,
+        metalness: 0.4,
+        clearcoat: 0.4,
+        transparent: true,
+        opacity: 0.85
+      });
+  const dome = new THREE.Mesh(new THREE.ConeGeometry(3.4, 2.2, 4), domeMat);
   dome.position.y = 7.8;
   dome.rotation.y = Math.PI / 4;
   group.add(dome);
@@ -389,14 +425,15 @@ export function createSubjectBuilding(
   // 4 Front Columns
   const colMat = new THREE.MeshStandardMaterial({
     color: 0xf8fafc,
-    roughness: 0.4,
-    metalness: 0.2
+    roughness: 0.38,
+    metalness: 0.22
   });
   const colGeo = new THREE.CylinderGeometry(0.28, 0.32, 5.2, 12);
   [-3.2, -1.5, 1.5, 3.2].forEach((xOffset) => {
     const col = new THREE.Mesh(colGeo, colMat);
     col.position.set(xOffset, 3.2, 3.55);
     col.castShadow = true;
+    col.receiveShadow = true;
     group.add(col);
   });
 
@@ -408,11 +445,12 @@ export function createSubjectBuilding(
   doorJamb.position.set(0, 2.15, 3.45);
   group.add(doorJamb);
 
-  const portalMat = new THREE.MeshStandardMaterial({
+  const portalMat = new THREE.MeshPhysicalMaterial({
     color: 0x38bdf8,
     emissive: new THREE.Color(accentHex),
-    emissiveIntensity: 0.7,
-    roughness: 0.2
+    emissiveIntensity: 0.75,
+    roughness: 0.15,
+    clearcoat: 0.5
   });
   const portal = new THREE.Mesh(
     new THREE.BoxGeometry(1.9, 2.7, 0.46),
@@ -433,30 +471,37 @@ export function createSubjectBuilding(
     new THREE.BoxGeometry(5.6, 1.8, 0.25),
     new THREE.MeshBasicMaterial({ map: signTex })
   );
-  signBoard.position.set(0, 5.1, 3.65);
+  signBoard.position.set(0, 5.1, 3.92);
   group.add(signBoard);
+
+  // Proximity-activated Rim Glow & Ground Beacon
+  const glowColor = new THREE.Color(accentHex).getHex();
+  attachInteractiveRimGlow(group, [8.8, 6.2, 7.2], 3.3, glowColor);
 
   return group;
 }
 
-// 3. Procedural Vehicles (School Bus, City Car, Kapal Pinisi, Space Rocket)
+// 3. Procedural Vehicles (School Bus, City Car, Kapal Pinisi, Space Rocket with Clearcoat 0.3 & Glass)
 export function createVehicle(
-  type: 'school_bus' | 'car' | 'pinisi' | 'rocket'
+  type: 'school_bus' | 'car' | 'pinisi' | 'rocket',
+  materials?: MaterialLibrary
 ): THREE.Group {
   const group = new THREE.Group();
   group.add(createContactShadowMesh(2.0));
 
   if (type === 'pinisi') {
-    // Traditional Indonesian Kapal Pinisi (7 parts)
-    const woodHullMat = new THREE.MeshStandardMaterial({
+    const woodHullMat = new THREE.MeshPhysicalMaterial({
       color: 0x78350f,
-      roughness: 0.7,
-      metalness: 0.1
+      roughness: 0.55,
+      metalness: 0.12,
+      clearcoat: 0.3,
+      clearcoatRoughness: 0.2
     });
-    const trimMat = new THREE.MeshStandardMaterial({
+    const trimMat = new THREE.MeshPhysicalMaterial({
       color: 0xf59e0b,
-      roughness: 0.35,
-      metalness: 0.4
+      roughness: 0.28,
+      metalness: 0.45,
+      clearcoat: 0.3
     });
     const sailMat = new THREE.MeshStandardMaterial({
       color: 0xfef3c7,
@@ -508,21 +553,36 @@ export function createVehicle(
   }
 
   if (type === 'rocket') {
-    const bodyMat = new THREE.MeshStandardMaterial({
-      color: 0xf8fafc,
-      roughness: 0.25,
-      metalness: 0.6
-    });
-    const noseMat = new THREE.MeshStandardMaterial({
-      color: 0xef4444,
-      roughness: 0.3,
-      metalness: 0.4
-    });
+    const bodyMat = materials
+      ? materials.getVehiclePhysicalMaterial('rocket_hull', 0xf8fafc, {
+          roughness: 0.22,
+          metalness: 0.6,
+          clearcoat: 0.3
+        })
+      : new THREE.MeshPhysicalMaterial({
+          color: 0xf8fafc,
+          roughness: 0.22,
+          metalness: 0.6,
+          clearcoat: 0.3
+        });
+    const noseMat = materials
+      ? materials.getVehiclePhysicalMaterial('rocket_nose', 0xef4444, {
+          roughness: 0.26,
+          metalness: 0.4,
+          clearcoat: 0.3
+        })
+      : new THREE.MeshPhysicalMaterial({
+          color: 0xef4444,
+          roughness: 0.26,
+          metalness: 0.4,
+          clearcoat: 0.3
+        });
     const fuselage = new THREE.Mesh(
       new THREE.CylinderGeometry(0.85, 1.0, 3.8, 16),
       bodyMat
     );
     fuselage.position.y = 2.4;
+    fuselage.castShadow = true;
     const nose = new THREE.Mesh(new THREE.ConeGeometry(0.85, 1.6, 16), noseMat);
     nose.position.y = 5.1;
     const thruster = new THREE.Mesh(
@@ -538,16 +598,29 @@ export function createVehicle(
   const isBus = type === 'school_bus';
   const length = isBus ? 5.2 : 3.2;
   const height = isBus ? 1.9 : 1.1;
-  const chassisMat = new THREE.MeshStandardMaterial({
-    color: isBus ? 0xfacc15 : 0x38bdf8,
-    roughness: 0.3,
-    metalness: 0.35
-  });
-  const glassMat = new THREE.MeshStandardMaterial({
-    color: 0x0f172a,
-    roughness: 0.1,
-    metalness: 0.85
-  });
+  const paintColor = isBus ? 0xfacc15 : 0x38bdf8;
+  const chassisMat = materials
+    ? materials.getVehiclePhysicalMaterial(`veh_${type}`, paintColor, {
+        roughness: 0.26,
+        metalness: 0.38,
+        clearcoat: 0.3
+      })
+    : new THREE.MeshPhysicalMaterial({
+        color: paintColor,
+        roughness: 0.26,
+        metalness: 0.38,
+        clearcoat: 0.3
+      });
+  const glassMat = materials
+    ? materials.getGlassMaterial(`veh_glass_${type}`, 0x38bdf8, 0.72)
+    : new THREE.MeshPhysicalMaterial({
+        color: 0x0f172a,
+        roughness: 0.1,
+        metalness: 0.8,
+        clearcoat: 0.5,
+        transparent: true,
+        opacity: 0.78
+      });
   const wheelMat = new THREE.MeshStandardMaterial({
     color: 0x18181b,
     roughness: 0.8
@@ -559,6 +632,7 @@ export function createVehicle(
   );
   body.position.y = 0.4 + height / 2;
   body.castShadow = true;
+  body.receiveShadow = true;
   group.add(body);
 
   const cabin = new THREE.Mesh(
@@ -589,15 +663,17 @@ export function createGiantGoose(): THREE.Group {
   const goose = new THREE.Group();
   goose.add(createContactShadowMesh(1.8));
 
-  const featherMat = new THREE.MeshStandardMaterial({
+  const featherMat = new THREE.MeshPhysicalMaterial({
     color: 0xffffff,
-    roughness: 0.5,
-    metalness: 0.05
+    roughness: 0.45,
+    metalness: 0.05,
+    clearcoat: 0.2
   });
-  const beakMat = new THREE.MeshStandardMaterial({
+  const beakMat = new THREE.MeshPhysicalMaterial({
     color: 0xf97316,
-    roughness: 0.35,
-    metalness: 0.1
+    roughness: 0.3,
+    metalness: 0.12,
+    clearcoat: 0.3
   });
   const eyeMat = new THREE.MeshBasicMaterial({ color: 0xdc2626 });
 
@@ -649,13 +725,14 @@ export function createGiantGoose(): THREE.Group {
   return goose;
 }
 
-// 5. NPC Warga with floating "!" Exclamation Marker
+// 5. NPC Warga with floating "!" Exclamation Marker + Proximity Rim Glow
 export function createNPCWithMarker(
   name: string,
   shirtHex: number,
-  maxAnisotropy = 4
+  maxAnisotropy = 4,
+  materials?: MaterialLibrary
 ): THREE.Group {
-  const npc = createStudentAvatar('batik', []);
+  const npc = createStudentAvatar('batik', [], materials);
   // Tint shirt
   npc.traverse((child) => {
     if (
@@ -663,10 +740,11 @@ export function createNPCWithMarker(
       (child as THREE.Mesh).geometry.type === 'BoxGeometry' &&
       child.position.y === 1.22
     ) {
-      ((child as THREE.Mesh).material as THREE.MeshStandardMaterial) =
-        new THREE.MeshStandardMaterial({
+      ((child as THREE.Mesh).material as THREE.MeshPhysicalMaterial) =
+        new THREE.MeshPhysicalMaterial({
           color: shirtHex,
-          roughness: 0.5
+          roughness: 0.45,
+          clearcoat: 0.3
         });
     }
   });
@@ -675,7 +753,7 @@ export function createNPCWithMarker(
   const bangMat = new THREE.MeshStandardMaterial({
     color: 0xfacc15,
     emissive: 0xf59e0b,
-    emissiveIntensity: 0.8,
+    emissiveIntensity: 0.85,
     roughness: 0.2
   });
   const bangGroup = new THREE.Group();
@@ -705,20 +783,25 @@ export function createNPCWithMarker(
   bangGroup.add(nameTag);
 
   npc.add(bangGroup);
+
+  // Attach proximity-activated Outline / Rim Glow
+  attachInteractiveRimGlow(npc, [1.5, 2.5, 1.5], 1.25, shirtHex);
+
   return npc;
 }
 
-// 6. Collectible Glowing Knowledge Book ("Buku Ilmu")
+// 6. Collectible Glowing Knowledge Book ("Buku Ilmu") + Proximity Rim Glow
 export function createKnowledgeBook(colorHex = 0x38bdf8): THREE.Group {
   const group = new THREE.Group();
   group.add(createContactShadowMesh(0.7));
 
-  const coverMat = new THREE.MeshStandardMaterial({
+  const coverMat = new THREE.MeshPhysicalMaterial({
     color: colorHex,
     emissive: colorHex,
-    emissiveIntensity: 0.35,
-    roughness: 0.3,
-    metalness: 0.3
+    emissiveIntensity: 0.4,
+    roughness: 0.25,
+    metalness: 0.35,
+    clearcoat: 0.3
   });
   const pagesMat = new THREE.MeshStandardMaterial({
     color: 0xfefce8,
@@ -743,24 +826,31 @@ export function createKnowledgeBook(colorHex = 0x38bdf8): THREE.Group {
   bookPivot.add(cover, pages);
   group.add(bookPivot);
 
+  attachInteractiveRimGlow(group, [1.3, 1.4, 1.3], 1.25, colorHex);
+
   return group;
 }
 
-// 7. Central City Fountain
-export function createFountain(): THREE.Group {
+// 7. Central City Fountain with Dynamic Wavy Water Shader (`uTime`)
+export function createFountain(materials?: MaterialLibrary): THREE.Group {
   const group = new THREE.Group();
   const stoneMat = new THREE.MeshStandardMaterial({
     color: 0xcbd5e1,
-    roughness: 0.7,
+    roughness: 0.68,
     metalness: 0.15
   });
-  const waterMat = new THREE.MeshStandardMaterial({
-    color: 0x0ea5e9,
-    emissive: 0x0284c7,
-    emissiveIntensity: 0.25,
-    roughness: 0.15,
-    metalness: 0.3
-  });
+  const waterMat = materials
+    ? materials.createDynamicWaterMaterial('fountain_water', 0x0ea5e9, 0x0284c7)
+    : new THREE.MeshPhysicalMaterial({
+        color: 0x0ea5e9,
+        emissive: 0x0284c7,
+        emissiveIntensity: 0.28,
+        roughness: 0.14,
+        metalness: 0.2,
+        clearcoat: 0.85,
+        transparent: true,
+        opacity: 0.88
+      });
 
   const outerRing = new THREE.Mesh(
     new THREE.CylinderGeometry(4.2, 4.5, 0.75, 24),
@@ -770,10 +860,10 @@ export function createFountain(): THREE.Group {
   outerRing.receiveShadow = true;
 
   const waterPool = new THREE.Mesh(
-    new THREE.CylinderGeometry(3.8, 3.8, 0.65, 24),
+    new THREE.CylinderGeometry(3.8, 3.8, 0.65, 32, 4),
     waterMat
   );
-  waterPool.position.y = 0.46;
+  waterPool.position.y = 0.48;
 
   const centerPillar = new THREE.Mesh(
     new THREE.CylinderGeometry(0.65, 0.95, 2.8, 16),

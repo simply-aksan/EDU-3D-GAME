@@ -6,7 +6,9 @@ export type CostumeUniformId =
   | 'sma'
   | 'pramuka'
   | 'batik'
-  | 'astronot';
+  | 'astronot'
+  | 'ksatria'
+  | 'ninja_siber';
 
 export type AccessoryId =
   | 'topi_sekolah'
@@ -14,7 +16,38 @@ export type AccessoryId =
   | 'blangkon'
   | 'kacamata'
   | 'jubah_juara'
-  | 'tas_ransel';
+  | 'tas_ransel'
+  | 'mahkota_emas'
+  | 'helm_antariksa'
+  | 'visor_holo';
+
+export type AuraId =
+  | 'none'
+  | 'aura_api'
+  | 'aura_es'
+  | 'jejak_bintang'
+  | 'aura_petir';
+
+export type PetId =
+  | 'none'
+  | 'garuda_mini'
+  | 'kucing_pintar'
+  | 'drone_sains'
+  | 'naga_nusantara';
+
+export type PropWeaponId =
+  | 'none'
+  | 'tongkat_sains'
+  | 'pedang_prisma'
+  | 'perisai_nusantara'
+  | 'buku_holo';
+
+export type ThemeColorId =
+  | 'klasik'
+  | 'emas'
+  | 'zamrud'
+  | 'siber'
+  | 'koral';
 
 export type PlayableGameId =
   | 'jelajah_dunia'
@@ -85,6 +118,14 @@ export interface PlayerProfile {
   unlockedUniforms: CostumeUniformId[];
   accessories: AccessoryId[];
   unlockedAccessories: AccessoryId[];
+  aura?: AuraId;
+  unlockedAuras?: AuraId[];
+  pet?: PetId;
+  unlockedPets?: PetId[];
+  propWeapon?: PropWeaponId;
+  unlockedProps?: PropWeaponId[];
+  themeColor?: ThemeColorId;
+  unlockedThemes?: ThemeColorId[];
   collectedBooks: string[];
   highScores: Record<string, number>;
 }
@@ -175,6 +216,8 @@ export interface WardrobeUniformItem {
   id: CostumeUniformId;
   name: string;
   cost: number;
+  minLevel?: number;
+  minStars?: number;
   shirtColor: number;
   bottomColor: number;
   tieColor: number;
@@ -185,74 +228,174 @@ export interface WardrobeAccessoryItem {
   id: AccessoryId;
   name: string;
   cost: number;
+  minLevel?: number;
+  minStars?: number;
   slot: 'head' | 'face' | 'back';
   badgeLabel: string;
+}
+
+export interface ShopAuraItem {
+  id: AuraId;
+  name: string;
+  cost: number;
+  minLevel?: number;
+  minStars?: number;
+  colorHex: string;
+  secondaryHex: string;
+  icon: string;
+}
+
+export interface ShopPetItem {
+  id: PetId;
+  name: string;
+  cost: number;
+  minLevel?: number;
+  minStars?: number;
+  primaryHex: string;
+  accentHex: string;
+  icon: string;
+}
+
+export interface ShopPropWeaponItem {
+  id: PropWeaponId;
+  name: string;
+  cost: number;
+  minLevel?: number;
+  minStars?: number;
+  colorHex: string;
+  icon: string;
+}
+
+export interface ShopThemeColorItem {
+  id: ThemeColorId;
+  name: string;
+  cost: number;
+  minLevel?: number;
+  hairHex: string;
+  skinHex: string;
+  trimHex: string;
 }
 
 export const UNIFORM_ITEMS: WardrobeUniformItem[] = [
   {
     id: 'sd',
-    name: 'Seragam SD Merah Putih',
+    name: 'Seragam SD',
     cost: 0,
     shirtColor: 0xf8fafc,
     bottomColor: 0xb91c1c,
     tieColor: 0xdc2626,
-    badgeLabel: 'Gratis · Awal'
+    badgeLabel: 'Gratis'
   },
   {
     id: 'smp',
-    name: 'Seragam SMP Putih Biru',
+    name: 'Seragam SMP',
     cost: 50,
     shirtColor: 0xf8fafc,
     bottomColor: 0x1d4ed8,
     tieColor: 0x1e40af,
-    badgeLabel: '50 Koin'
+    badgeLabel: '🪙 50'
   },
   {
     id: 'sma',
-    name: 'Seragam SMA Putih Abu',
+    name: 'Seragam SMA',
     cost: 80,
     shirtColor: 0xf8fafc,
     bottomColor: 0x64748b,
     tieColor: 0x475569,
-    badgeLabel: '80 Koin'
+    badgeLabel: '🪙 80'
   },
   {
     id: 'pramuka',
-    name: 'Seragam Pramuka Lengkap',
+    name: 'Pramuka Lengkap',
     cost: 100,
     shirtColor: 0xa16207,
     bottomColor: 0x713f12,
     tieColor: 0xdc2626,
-    badgeLabel: '100 Koin'
+    badgeLabel: '🪙 100'
   },
   {
     id: 'batik',
-    name: 'Batik Emas Nusantara',
+    name: 'Batik Emas',
     cost: 150,
     shirtColor: 0xd97706,
     bottomColor: 0x1e293b,
     tieColor: 0xfef08a,
-    badgeLabel: '150 Koin'
+    badgeLabel: '🪙 150'
   },
   {
     id: 'astronot',
-    name: 'Setelan Kosmonot Sains',
+    name: 'Kosmonot Sains',
     cost: 220,
+    minLevel: 2,
     shirtColor: 0x38bdf8,
     bottomColor: 0x0284c7,
     tieColor: 0xf59e0b,
-    badgeLabel: '220 Koin'
+    badgeLabel: '🪙 220 · ★Lv.2'
+  },
+  {
+    id: 'ksatria',
+    name: 'Zirah Ksatria Nusantara',
+    cost: 280,
+    minLevel: 3,
+    shirtColor: 0xf59e0b,
+    bottomColor: 0x78350f,
+    tieColor: 0xef4444,
+    badgeLabel: '🪙 280 · ★Lv.3'
+  },
+  {
+    id: 'ninja_siber',
+    name: 'Setelan Ninja Siber',
+    cost: 340,
+    minStars: 3,
+    shirtColor: 0x18181b,
+    bottomColor: 0x09090b,
+    tieColor: 0x10b981,
+    badgeLabel: '🪙 340 · 3★'
   }
 ];
 
 export const ACCESSORY_ITEMS: WardrobeAccessoryItem[] = [
-  { id: 'topi_sekolah', name: 'Topi Sekolah Nasional', cost: 0, slot: 'head', badgeLabel: 'Gratis' },
-  { id: 'tas_ransel', name: 'Tas Ransel Pelajar', cost: 0, slot: 'back', badgeLabel: 'Gratis' },
-  { id: 'kacamata', name: 'Kacamata Lensa Sains', cost: 60, slot: 'face', badgeLabel: '60 Koin' },
-  { id: 'topi_pramuka', name: 'Baret Tunas Kelapa', cost: 90, slot: 'head', badgeLabel: '90 Koin' },
-  { id: 'blangkon', name: 'Mahkota / Blangkon Emas', cost: 140, slot: 'head', badgeLabel: '140 Koin' },
-  { id: 'jubah_juara', name: 'Jubah Sutra Sang Juara', cost: 180, slot: 'back', badgeLabel: '180 Koin' }
+  { id: 'topi_sekolah', name: 'Topi Sekolah', cost: 0, slot: 'head', badgeLabel: 'Gratis' },
+  { id: 'tas_ransel', name: 'Tas Ransel', cost: 0, slot: 'back', badgeLabel: 'Gratis' },
+  { id: 'kacamata', name: 'Kacamata Sains', cost: 60, slot: 'face', badgeLabel: '🪙 60' },
+  { id: 'topi_pramuka', name: 'Baret Pramuka', cost: 90, slot: 'head', badgeLabel: '🪙 90' },
+  { id: 'blangkon', name: 'Blangkon Batik', cost: 140, slot: 'head', badgeLabel: '🪙 140' },
+  { id: 'jubah_juara', name: 'Jubah Sang Juara', cost: 180, minLevel: 2, slot: 'back', badgeLabel: '🪙 180 · ★Lv.2' },
+  { id: 'mahkota_emas', name: 'Mahkota Raja Ilmu', cost: 240, minLevel: 3, slot: 'head', badgeLabel: '🪙 240 · ★Lv.3' },
+  { id: 'helm_antariksa', name: 'Helm Kubah Antariksa', cost: 260, minStars: 2, slot: 'head', badgeLabel: '🪙 260 · 2★' },
+  { id: 'visor_holo', name: 'Visor Laser Hologram', cost: 200, minStars: 2, slot: 'face', badgeLabel: '🪙 200 · 2★' }
+];
+
+export const AURA_ITEMS: ShopAuraItem[] = [
+  { id: 'none', name: 'Tanpa Aura', cost: 0, colorHex: '#71717a', secondaryHex: '#52525b', icon: '○' },
+  { id: 'aura_api', name: 'Aura Api Emas', cost: 120, colorHex: '#f59e0b', secondaryHex: '#ef4444', icon: '🔥' },
+  { id: 'aura_es', name: 'Aura Kristal Es', cost: 150, colorHex: '#38bdf8', secondaryHex: '#bae6fd', icon: '❄' },
+  { id: 'jejak_bintang', name: 'Jejak Bintang Kosmik', cost: 200, minLevel: 2, colorHex: '#a855f7', secondaryHex: '#fde047', icon: '✦' },
+  { id: 'aura_petir', name: 'Aura Petir Siber', cost: 260, minStars: 3, colorHex: '#10b981', secondaryHex: '#34d399', icon: '⚡' }
+];
+
+export const PET_ITEMS: ShopPetItem[] = [
+  { id: 'none', name: 'Tanpa Pendamping', cost: 0, primaryHex: '#71717a', accentHex: '#52525b', icon: '○' },
+  { id: 'kucing_pintar', name: 'Kucing Oren Pintar', cost: 140, primaryHex: '#f97316', accentHex: '#fef08a', icon: '🐱' },
+  { id: 'drone_sains', name: 'Drone Holo Sains', cost: 190, minLevel: 2, primaryHex: '#38bdf8', accentHex: '#10b981', icon: '🛸' },
+  { id: 'garuda_mini', name: 'Garuda Emas Mini', cost: 250, minLevel: 3, primaryHex: '#eab308', accentHex: '#dc2626', icon: '🦅' },
+  { id: 'naga_nusantara', name: 'Naga Zamrud Kecil', cost: 320, minStars: 3, primaryHex: '#10b981', accentHex: '#fde047', icon: '🐉' }
+];
+
+export const PROP_WEAPON_ITEMS: ShopPropWeaponItem[] = [
+  { id: 'none', name: 'Tangan Kosong', cost: 0, colorHex: '#71717a', icon: '○' },
+  { id: 'buku_holo', name: 'Kitab Hologram', cost: 90, colorHex: '#38bdf8', icon: '📖' },
+  { id: 'tongkat_sains', name: 'Tongkat Kristal Sains', cost: 160, minLevel: 2, colorHex: '#a855f7', icon: '🪄' },
+  { id: 'perisai_nusantara', name: 'Perisai Emas Garuda', cost: 210, minLevel: 2, colorHex: '#eab308', icon: '🛡' },
+  { id: 'pedang_prisma', name: 'Pedang Cahaya Prisma', cost: 290, minStars: 3, colorHex: '#10b981', icon: '⚔' }
+];
+
+export const THEME_COLOR_ITEMS: ShopThemeColorItem[] = [
+  { id: 'klasik', name: 'Klasik Nusantara', cost: 0, hairHex: '#18181b', skinHex: '#f4c29f', trimHex: '#ffffff' },
+  { id: 'emas', name: 'Surya Keemasan', cost: 70, hairHex: '#92400e', skinHex: '#fcd34d', trimHex: '#fef08a' },
+  { id: 'zamrud', name: 'Zamrud Rimba', cost: 90, hairHex: '#064e3b', skinHex: '#f4c29f', trimHex: '#34d399' },
+  { id: 'siber', name: 'Siber Perak', cost: 120, minLevel: 2, hairHex: '#e2e8f0', skinHex: '#f1f5f9', trimHex: '#38bdf8' },
+  { id: 'koral', name: 'Koral Samudra', cost: 140, minLevel: 2, hairHex: '#881337', skinHex: '#fbcfe8', trimHex: '#fb7185' }
 ];
 
 export const MINI_GAME_REGISTRY: MiniGameSlot[] = [

@@ -1,51 +1,42 @@
-import * as THREE from 'three';
-import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import {
   AccessoryId,
-  BIOMES,
+  AuraId,
   BiomeId,
   CostumeUniformId,
   DEFAULT_QUESTION_PACK,
   DETECTIVE_CASES,
+  DetectiveCase,
+  PetId,
   PlayableGameId,
+  PropWeaponId,
   QuestionItem,
-  QuestionPack
+  QuestionPack,
+  ThemeColorId
 } from './questions';
 import {
-  createContactShadowMesh,
-  createFountain,
-  createGiantGoose,
-  createKnowledgeBook,
-  createNPCWithMarker,
-  createSignTexture,
-  createStudentAvatar,
-  createSubjectBuilding,
-  createVehicle,
-  updateAvatarAnimation
-} from './models3d';
+  BOSS_PILLAR_SPECS,
+  CHEM_TUBE_SPECS,
+  CONVEYOR_CHUTE_SPECS,
+  GOALIE_ZONE_SPECS,
+  PASAR_CHALLENGES,
+  PINISI_ISLAND_COORDS,
+  PRISM_MONUMENT_SPECS,
+  RobotCommandType,
+  RobotStepKeyframe,
+  getQuestionsBySubject,
+  simulateRobotProgram
+} from './rules';
+import { JuiceManager, computeDynamicDifficulty } from './JuiceEngine';
 import {
-  ArsitekMenaraGame,
-  BalapRoketGame,
-  IMiniGameModule,
-  LabirinMinotaurGame,
-  PanahanKatapelGame,
-  PertahananKastilGame
-} from './Batch2MiniGames';
-import {
-  EkspedisiPinisiGame,
-  IBatch3MiniGame,
-  KokiKimiaGame,
-  SelamSamudraGame,
-  SirkuitLogikaGame
-} from './Batch3MiniGames';
-import {
-  ArenaBossGame,
-  PabrikSortirGame,
-  PenjagaGawangGame,
-  TarikTambangGame,
-  TebakBangunGame
-} from './Batch4MiniGames';
-import { getLaneX, RobotCommandType, RUNNER_LANES } from './rules';
+  BIOME_PIXEL_PALETTES,
+  PixelParticle2D,
+  drawCanvasTargetReticle,
+  drawDetailedObject2D,
+  drawIsoBlock,
+  drawPixelSignLabel,
+  drawPixelStudentAvatar,
+  worldToIsoScreen
+} from './IsoPixelEngine';
 import { soundManager } from './sound';
 
 export interface SceneCallbacks {
@@ -66,242 +57,581 @@ export interface SceneCallbacks {
   onBatch2OptionClick?: (optionIndex: number) => void;
 }
 
-interface MovingVehicleActor {
-  mesh: THREE.Group;
-  speed: number;
-  axis: 'x' | 'z' | 'circle';
-  dir: number;
-  radius?: number;
-  angle?: number;
+interface IsoBuildingSpec {
+  id: string;
+  title: string;
+  subject: string;
+  x: number;
+  z: number;
+  w: number;
+  d: number;
+  h: number;
+  topColor: string;
+  leftColor: string;
+  rightColor: string;
+  accentColor: string;
 }
 
-interface RunnerGateGroup {
-  group: THREE.Group;
+interface IsoNpcSpec {
+  id: string;
+  name: string;
+  role: string;
+  subject: string;
+  x: number;
   z: number;
-  resolved: boolean;
+  shirtHex: string;
 }
 
-interface RunnerObstacle {
-  mesh: THREE.Mesh;
-  lane: number;
-  z: number;
-  type: 'barrier' | 'coin' | 'hoverboard' | 'magnet' | 'lightning';
-  active: boolean;
+const ISO_BUILDINGS: IsoBuildingSpec[] = [
+  {
+    id: 'b_math',
+    title: 'Menara Matematika',
+    subject: 'Matematika',
+    x: -10,
+    z: -8,
+    w: 96,
+    d: 48,
+    h: 92,
+    topColor: '#38bdf8',
+    leftColor: '#0284c7',
+    rightColor: '#0369a1',
+    accentColor: '#38bdf8'
+  },
+  {
+    id: 'b_science',
+    title: 'Kubah Sains & Kimia',
+    subject: 'Sains',
+    x: 10,
+    z: -8,
+    w: 96,
+    d: 48,
+    h: 86,
+    topColor: '#34d399',
+    leftColor: '#059669',
+    rightColor: '#047857',
+    accentColor: '#10b981'
+  },
+  {
+    id: 'b_history',
+    title: 'Museum Nusantara',
+    subject: 'Sejarah',
+    x: -11,
+    z: 8,
+    w: 96,
+    d: 48,
+    h: 80,
+    topColor: '#fbbf24',
+    leftColor: '#d97706',
+    rightColor: '#b45309',
+    accentColor: '#f59e0b'
+  },
+  {
+    id: 'b_lang',
+    title: 'Balai Bahasa & Sastra',
+    subject: 'Bahasa',
+    x: 11,
+    z: 8,
+    w: 96,
+    d: 48,
+    h: 80,
+    topColor: '#f472b6',
+    leftColor: '#db2777',
+    rightColor: '#9d174d',
+    accentColor: '#ec4899'
+  },
+  {
+    id: 'b_code',
+    title: 'Pusat Sirkuit Koding',
+    subject: 'Coding',
+    x: 0,
+    z: -14,
+    w: 110,
+    d: 56,
+    h: 108,
+    topColor: '#a78bfa',
+    leftColor: '#7c3aed',
+    rightColor: '#5b21b6',
+    accentColor: '#8b5cf6'
+  }
+];
+
+const ISO_NPCS: IsoNpcSpec[] = [
+  {
+    id: 'npc_budi',
+    name: 'Pak Guru Budi',
+    role: 'Wali Kelas Matematika',
+    subject: 'Matematika',
+    x: -4.5,
+    z: -3.5,
+    shirtHex: '#0284c7'
+  },
+  {
+    id: 'npc_siti',
+    name: 'Kak Siti Peneliti',
+    role: 'Mentor Laboratorium Sains',
+    subject: 'Sains',
+    x: 5,
+    z: -3,
+    shirtHex: '#059669'
+  },
+  {
+    id: 'npc_aris',
+    name: 'Nakhoda Aris',
+    role: 'Sejarawan Bahari Nusantara',
+    subject: 'Sejarah',
+    x: -4,
+    z: 4.5,
+    shirtHex: '#d97706'
+  },
+  {
+    id: 'npc_dewi',
+    name: 'Kak Dewi Koding',
+    role: 'Arsitek Algoritma',
+    subject: 'Coding',
+    x: 4.5,
+    z: 4.5,
+    shirtHex: '#7c3aed'
+  }
+];
+
+interface ClickHotspot {
+  id: string;
+  screenX: number;
+  screenY: number;
+  radius: number;
+  action: () => void;
 }
 
 export class SceneController {
   private container: HTMLElement;
   private callbacks: SceneCallbacks;
-  private renderer: THREE.WebGLRenderer;
-  private scene: THREE.Scene;
-  private camera: THREE.PerspectiveCamera;
-  private isSoftwareGl: boolean;
-  private maxAnisotropy: number;
+  private canvas: HTMLCanvasElement;
+  private ctx: CanvasRenderingContext2D;
 
-  private activeGroup: THREE.Group;
-  private playerAvatar: THREE.Group | null = null;
-  private interactables: THREE.Object3D[] = [];
-  private raycaster = new THREE.Raycaster();
-  private pointerNdc = new THREE.Vector2();
-
-  private currentBiome: BiomeId = 'kota_ilmu';
-  private currentMode: PlayableGameId = 'jelajah_dunia';
-  private isTitleTour = true;
-  private isPaused = false;
-
-  private uniformId: CostumeUniformId = 'sd';
+  private uniform: CostumeUniformId = 'sd';
   private accessories: AccessoryId[] = ['topi_sekolah', 'tas_ransel'];
+  private aura: AuraId = 'none';
+  private pet: PetId = 'none';
+  private propWeapon: PropWeaponId = 'none';
+  private themeColor: ThemeColorId = 'klasik';
+  private pack: QuestionPack = DEFAULT_QUESTION_PACK;
+  private currentBiome: BiomeId = 'kota_ilmu';
+  private activeGame: PlayableGameId = 'jelajah_dunia';
 
-  // Reusable scratch vectors (Zero-GC render loop)
-  private _camTargetPos = new THREE.Vector3();
-  private _camLookTarget = new THREE.Vector3();
-  private _currentLook = new THREE.Vector3(0, 2, 0);
-  private _dummy = new THREE.Object3D();
+  private rafId: number | null = null;
+  private lastTime = 0;
+  private elapsedTime = 0;
+  private isPaused = false;
+  private isTitleTour = true;
+  private wardrobeShowcaseActive = false;
 
-  // Player physics & movement state
-  private playerPos = new THREE.Vector3(0, 0, 14);
-  private playerRotY = Math.PI;
-  private playerVelY = 0;
-  private playerJumpY = 0;
-  private walkDistance = 0;
-  private keysPressed = new Set<string>();
+  // Player Isometric State
+  private playerX = 0;
+  private playerZ = 3;
+  private playerY = 0;
+  private playerVy = 0;
+  private playerVx = 0;
+  private playerVz = 0;
+  private walkPhase = 0;
+  private squashX = 1;
+  private squashY = 1;
+
+  // Controls
+  private keys: Record<string, boolean> = {};
   private joystickVec = { x: 0, y: 0 };
+  private hotspots: ClickHotspot[] = [];
 
-  // Mode-specific dynamic actors
-  private vehicles: MovingVehicleActor[] = [];
-  private books: { id: string; subject: string; group: THREE.Group; collected: boolean }[] = [];
-  private fountainSpout: THREE.Object3D | null = null;
+  // Juice, Fever & Particles
+  private juiceManager = new JuiceManager();
+  private feverActive = false;
+  private currentScore = 0;
+  private currentStreak = 0;
+  private particles: PixelParticle2D[] = [];
+  private floatingTexts: {
+    id: string;
+    text: string;
+    color: string;
+    x: number;
+    y: number;
+    life: number;
+    maxLife: number;
+  }[] = [];
 
-  // Lari Kilat Runner state
+  private books: {
+    id: string;
+    x: number;
+    z: number;
+    subject: string;
+    collected: boolean;
+  }[] = [
+    { id: 'bk_1', x: -6, z: 0, subject: 'Sains', collected: false },
+    { id: 'bk_2', x: 6, z: 0, subject: 'Sejarah', collected: false },
+    { id: 'bk_3', x: 0, z: -6, subject: 'Matematika', collected: false },
+    { id: 'bk_4', x: 0, z: 7, subject: 'Coding', collected: false },
+    { id: 'bk_5', x: 7, z: -6, subject: 'Bahasa', collected: false }
+  ];
+
+  // Mini-Game Shared Question & Specific States
+  private activeQuestion: QuestionItem = DEFAULT_QUESTION_PACK.questions[0];
+
+  // #2 Lari Kilat
   private runnerLane = 1;
-  private runnerSpeed = 16;
   private runnerDistance = 0;
+  private runnerSpeed = 18;
   private runnerCoins = 0;
   private runnerLives = 3;
-  private gooseDistance = 7.5; // Meters behind player
-  private activePowerUp: string | null = null;
-  private powerUpTimer = 0;
-  private gooseMesh: THREE.Group | null = null;
-  private runnerGate: RunnerGateGroup | null = null;
-  private runnerObstacles: RunnerObstacle[] = [];
-  private activeRunnerQuestion: QuestionItem | null = null;
-  private lastHudSync = 0;
+  private runnerGooseDist = 12;
+  private runnerGateZ = -32;
+  private runnerPowerup: string | null = null;
 
-  // Jatuh Bangun Tower state
-  private towerFloor = 0; // 0..4
-  private towerTargetY = 0;
-  private towerPlatforms: THREE.Group[] = [];
-  private towerCrown: THREE.Mesh | null = null;
+  // #3 Jatuh Bangun
+  private towerFloor = 0;
 
-  // Jembatan Juara Bridge state
-  private bridgeStep = 0; // 0..6
-  private bridgePanels: THREE.Mesh[][] = [];
+  // #4 Detektif Kota
+  private detectiveCase: DetectiveCase = DETECTIVE_CASES[0];
+  private unlockedTkps: number[] = [];
 
-  // Pasar Nusantara 3D Showcase state
-  private pasarDisplayGroup: THREE.Group | null = null;
+  // #5 Pasar Nusantara
+  private pasarIndex = 0;
 
-  // Batch 2 (#7 - #11) & Batch 3 (#12 - #15) Mini-Games modular lifecycle controllers
-  private activeQuestionPack: QuestionPack = DEFAULT_QUESTION_PACK;
-  private batch2Module: IMiniGameModule | null = null;
-  private batch3Module: IBatch3MiniGame | null = null;
+  // #6 Jembatan Juara
+  private bridgeStep = 0;
 
-  // Animation loop handles
-  private frameId = 0;
-  private isDisposed = false;
-  private lastTimestamp = performance.now();
-  private elapsed = 0;
+  // #7 Pertahanan Kastil
+  private castleMonsterProgress = 0;
+  private castleCannonFlash = 0;
+
+  // #8 Balap Roket
+  private rocketX = 0;
+  private rocketY = 0;
+  private rocketRingFlash = 0;
+
+  // #9 Arsitek Menara
+  private architectFloors = 1;
+  private architectTilt = 0;
+
+  // #10 Labirin Minotaur
+  private mazeStage = 0;
+
+  // #11 Panahan Katapel
+  private catapultArcT = 0;
+  private catapultTargetIdx = 0;
+
+  // #12 Sirkuit Logika
+  private robotCol = 2;
+  private robotRow = 3;
+  private robotKeyframes: RobotStepKeyframe[] = [];
+
+  // #13 Selam Samudra
+  private subSonarPulse = 0;
+  private subTargetChest = -1;
+
+  // #14 Koki Kimia
+  private chemPourTube = -1;
+  private chemPourTimer = 0;
+
+  // #15 Ekspedisi Pinisi
+  private pinisiShipX = 0;
+  private pinisiShipZ = 0;
+
+  // #16 Penjaga Gawang
+  private goalieDiveZone = -1;
+  private goalieBallT = 0;
+
+  // #17 Pabrik Sortir
+  private conveyorGateIdx = 0;
+
+  // #18 Tebak Bangun
+  private prismAimIdx = 0;
+  private prismLaserTimer = 0;
+
+  // #19 Tarik Tambang
+  private tugRopeOffset = 0;
+
+  // #20 Arena Boss
+  private bossHitFlash = 0;
+  private bossBeamPillar = -1;
+  private bossUltimateActive = false;
 
   constructor(container: HTMLElement, callbacks: SceneCallbacks) {
     this.container = container;
     this.callbacks = callbacks;
 
-    this.isSoftwareGl = (() => {
-      const gl = document.createElement('canvas').getContext('webgl2');
-      if (!gl) return true;
-      const ext = gl.getExtension('WEBGL_debug_renderer_info');
-      const param = ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER;
-      const gpu = String(gl.getParameter(param));
-      gl.getExtension('WEBGL_lose_context')?.loseContext();
-      return /SwiftShader|llvmpipe|softpipe|Software|Basic Render/i.test(gpu);
-    })();
+    this.canvas = document.createElement('canvas');
+    this.canvas.className = 'w-full h-full block cursor-pointer select-none';
+    this.canvas.style.imageRendering = 'pixelated';
+    this.container.innerHTML = '';
+    this.container.appendChild(this.canvas);
 
-    this.renderer = new THREE.WebGLRenderer({
-      antialias: !this.isSoftwareGl,
-      powerPreference: 'high-performance'
-    });
-    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.1;
-    this.renderer.setPixelRatio(
-      this.isSoftwareGl ? 1 : Math.min(window.devicePixelRatio || 1, 2)
-    );
-    this.renderer.shadowMap.enabled = !this.isSoftwareGl;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-
-    const width = container.clientWidth || window.innerWidth;
-    const height = container.clientHeight || window.innerHeight;
-    this.renderer.setSize(width, height);
-    container.appendChild(this.renderer.domElement);
-
-    this.maxAnisotropy = this.renderer.capabilities.getMaxAnisotropy();
-
-    this.scene = new THREE.Scene();
-    this.camera = new THREE.PerspectiveCamera(55, width / height, 0.2, 220);
-    this.camera.position.set(0, 12, 26);
-
-    // Studio Environment Map (PMREM RoomEnvironment)
-    const pmremGenerator = new THREE.PMREMGenerator(this.renderer);
-    this.scene.environment = pmremGenerator.fromScene(
-      new RoomEnvironment(),
-      0.04
-    ).texture;
-    pmremGenerator.dispose();
-
-    // Balanced 3-point warm/cool lighting
-    const hemiLight = new THREE.HemisphereLight(0xbae6fd, 0x1e293b, 0.85);
-    hemiLight.position.set(0, 50, 0);
-    this.scene.add(hemiLight);
-
-    const keyLight = new THREE.DirectionalLight(0xfffbeb, 1.45);
-    keyLight.position.set(24, 38, 22);
-    keyLight.castShadow = !this.isSoftwareGl;
-    keyLight.shadow.mapSize.width = 1024;
-    keyLight.shadow.mapSize.height = 1024;
-    const d = 38;
-    keyLight.shadow.camera.left = -d;
-    keyLight.shadow.camera.right = d;
-    keyLight.shadow.camera.top = d;
-    keyLight.shadow.camera.bottom = -d;
-    keyLight.shadow.camera.near = 1;
-    keyLight.shadow.camera.far = 110;
-    keyLight.shadow.bias = -0.0005;
-    keyLight.shadow.normalBias = 0.02;
-    this.scene.add(keyLight);
-
-    const rimLight = new THREE.DirectionalLight(0x38bdf8, 0.45);
-    rimLight.position.set(-20, 18, -24);
-    this.scene.add(rimLight);
-
-    this.activeGroup = new THREE.Group();
-    this.scene.add(this.activeGroup);
-
-    this.bindEvents();
-    this.rebuildActiveScene();
-    this.startLoop();
-  }
-
-  public updateCallbacks(callbacks: SceneCallbacks): void {
-    this.callbacks = callbacks;
-  }
-
-  public setTitleTour(isTitle: boolean): void {
-    this.isTitleTour = isTitle;
-    if (!isTitle) {
-      this.keysPressed.clear();
+    const context = this.canvas.getContext('2d');
+    if (!context) {
+      throw new Error('Canvas 2D context unavailable');
     }
+    this.ctx = context;
+
+    for (let i = 0; i < 120; i++) {
+      this.particles.push({
+        active: false,
+        x: 0,
+        y: 0,
+        vx: 0,
+        vy: 0,
+        size: 4,
+        color: '#facc15',
+        life: 0,
+        maxLife: 1,
+        gravity: 260
+      });
+    }
+
+    this.handleResize();
+    window.addEventListener('resize', this.handleResize);
+    window.addEventListener('keydown', this.handleKeyDown);
+    window.addEventListener('keyup', this.handleKeyUp);
+    this.canvas.addEventListener('pointerdown', this.handlePointerDown);
+
+    this.pickRandomQuestion();
+    this.lastTime = performance.now();
+    this.rafId = requestAnimationFrame(this.loop);
+  }
+
+  private handleResize = (): void => {
+    const rect = this.container.getBoundingClientRect();
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    this.canvas.width = Math.max(320, Math.floor(rect.width * dpr));
+    this.canvas.height = Math.max(240, Math.floor(rect.height * dpr));
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.ctx.imageSmoothingEnabled = false;
+  };
+
+  private handleKeyDown = (e: KeyboardEvent): void => {
+    const code = e.code;
+    this.keys[code] = true;
+
+    if (this.activeGame === 'lari_kilat') {
+      if (code === 'KeyA' || code === 'ArrowLeft') {
+        this.shiftRunnerLane(-1);
+      } else if (code === 'KeyD' || code === 'ArrowRight') {
+        this.shiftRunnerLane(1);
+      } else if (code === 'Space') {
+        this.triggerJumpOrAction();
+      }
+    } else if (code === 'Space') {
+      this.triggerJumpOrAction();
+    }
+  };
+
+  private handleKeyUp = (e: KeyboardEvent): void => {
+    this.keys[e.code] = false;
+  };
+
+  private handlePointerDown = (e: PointerEvent): void => {
+    const rect = this.canvas.getBoundingClientRect();
+    const px = e.clientX - rect.left;
+    const py = e.clientY - rect.top;
+
+    for (const spot of this.hotspots) {
+      const dx = px - spot.screenX;
+      const dy = py - spot.screenY;
+      if (dx * dx + dy * dy <= spot.radius * spot.radius) {
+        spot.action();
+        return;
+      }
+    }
+  };
+
+  private pickRandomQuestion(subject?: string): QuestionItem {
+    const list = getQuestionsBySubject(this.pack, subject);
+    const q = list[Math.floor(Math.random() * list.length)] || list[0];
+    this.activeQuestion = q;
+    return q;
+  }
+
+  // ==========================================================================
+  // PUBLIC API FOR APP.TSX
+  // ==========================================================================
+
+  public setQuestionPack(pack: QuestionPack): void {
+    this.pack = pack;
+    this.pickRandomQuestion();
+  }
+
+  public setWardrobe(
+    uniform: CostumeUniformId,
+    accessories: AccessoryId[],
+    extra?: {
+      aura?: AuraId;
+      pet?: PetId;
+      propWeapon?: PropWeaponId;
+      themeColor?: ThemeColorId;
+    }
+  ): void {
+    this.uniform = uniform;
+    this.accessories = accessories;
+    if (extra) {
+      if (extra.aura !== undefined) this.aura = extra.aura;
+      if (extra.pet !== undefined) this.pet = extra.pet;
+      if (extra.propWeapon !== undefined) this.propWeapon = extra.propWeapon;
+      if (extra.themeColor !== undefined) this.themeColor = extra.themeColor;
+    }
+  }
+
+  private getExtraLoadout() {
+    return {
+      aura: this.aura,
+      pet: this.pet,
+      propWeapon: this.propWeapon,
+      themeColor: this.themeColor
+    };
+  }
+
+  public setTitleTour(active: boolean): void {
+    this.isTitleTour = active;
+  }
+
+  public setWardrobeInspection(active: boolean): void {
+    this.wardrobeShowcaseActive = active;
   }
 
   public setPaused(paused: boolean): void {
     this.isPaused = paused;
-    if (paused) {
-      this.keysPressed.clear();
-    }
-  }
-
-  public setVirtualJoystick(x: number, y: number): void {
-    this.joystickVec.x = x;
-    this.joystickVec.y = y;
-  }
-
-  public triggerJumpOrAction(): void {
-    if (this.currentMode === 'lari_kilat') {
-      if (this.playerJumpY <= 0.05) {
-        this.playerVelY = 10.5;
-        soundManager.playJump();
-      }
-      return;
-    }
-    if (this.playerJumpY <= 0.05) {
-      this.playerVelY = 9.2;
-      soundManager.playJump();
-    }
-  }
-
-  public shiftRunnerLane(delta: -1 | 1): void {
-    if (this.currentMode !== 'lari_kilat') return;
-    this.runnerLane = Math.max(0, Math.min(3, this.runnerLane + delta));
-    soundManager.playStep();
   }
 
   public setBiome(biome: BiomeId): void {
-    if (this.currentBiome === biome) return;
     this.currentBiome = biome;
-    this.rebuildActiveScene();
     soundManager.startAmbient(biome);
   }
 
-  public setQuestionPack(pack: QuestionPack): void {
-    this.activeQuestionPack = pack;
+  public setVirtualJoystick(x: number, z: number): void {
+    this.joystickVec = { x, y: z };
+  }
+
+  public shiftRunnerLane(dir: -1 | 1): void {
+    this.runnerLane = Math.max(0, Math.min(3, this.runnerLane + dir));
+    soundManager.playStep();
+  }
+
+  public triggerJumpOrAction(): void {
+    if (this.playerY <= 0.05) {
+      this.playerVy = 8.5;
+      this.squashX = 1.22;
+      this.squashY = 0.78;
+      soundManager.playJump();
+      this.spawnPixelBurst(0, -10, '#e2e8f0', 10);
+    }
+  }
+
+  private cameraZoom = 1.0;
+
+  public setCameraZoom(zoomDelta: number): void {
+    this.cameraZoom = Math.max(0.65, Math.min(1.85, Number((this.cameraZoom + zoomDelta).toFixed(2))));
+  }
+
+  public resetCameraZoom(): void {
+    this.cameraZoom = 1.0;
+  }
+
+  public getCameraZoom(): number {
+    return this.cameraZoom;
+  }
+
+  public triggerInteractAction(): void {
+    // 1. If in runner mode or jumping, trigger jump
+    if (this.activeGame === 'lari_kilat') {
+      this.triggerJumpOrAction();
+      return;
+    }
+
+    // 2. In Open-World Hub, check if near any building, NPC, or book
+    if (this.activeGame === 'jelajah_dunia') {
+      for (const b of ISO_BUILDINGS) {
+        const dist = Math.hypot(this.playerX - b.x, this.playerZ - b.z);
+        if (dist < 5.5) {
+          this.callbacks.onOpenBuildingQuiz(b.subject, b.title);
+          soundManager.playCoin();
+          return;
+        }
+      }
+      for (const npc of ISO_NPCS) {
+        const dist = Math.hypot(this.playerX - npc.x, this.playerZ - npc.z);
+        if (dist < 4.0) {
+          this.callbacks.onOpenNpcDialog(npc.name, npc.subject);
+          soundManager.playCoin();
+          return;
+        }
+      }
+      for (const bk of this.books) {
+        if (!bk.collected) {
+          const dist = Math.hypot(this.playerX - bk.x, this.playerZ - bk.z);
+          if (dist < 3.0) {
+            bk.collected = true;
+            soundManager.playCoin();
+            this.callbacks.onCollectBook(bk.id, bk.subject);
+            return;
+          }
+        }
+      }
+    }
+
+    // Default: trigger jump or action squish
+    this.triggerJumpOrAction();
+  }
+
+  public updateRunnerQuestionGate(nextQ: QuestionItem): void {
+    this.activeQuestion = nextQ;
+  }
+
+  public aimCatapult(optionIdx: number): void {
+    this.catapultTargetIdx = optionIdx;
+  }
+
+  public triggerAnswerFeedbackParticles(
+    isCorrect: boolean,
+    streak: number,
+    xpDelta = 30,
+    score = 0
+  ): void {
+    this.currentStreak = streak;
+    this.currentScore = score;
+    this.feverActive = streak >= 3;
+    soundManager.setFeverMode(this.feverActive);
+
+    const w = this.canvas.clientWidth || 800;
+    const h = this.canvas.clientHeight || 600;
+
+    if (isCorrect) {
+      this.juiceManager.triggerHitStop(0.08, 0.12);
+      this.squashX = 0.85;
+      this.squashY = 1.22;
+      this.spawnPixelBurst(0, -24, '#facc15', 22);
+      const label =
+        streak >= 3
+          ? `+${xpDelta} XP! FEVER x${streak}!`
+          : `+${xpDelta} XP! TEPAT!`;
+      this.floatingTexts.push({
+        id: `ft-${Date.now()}`,
+        text: label,
+        color: streak >= 3 ? '#22d3ee' : '#fde047',
+        x: w * 0.5,
+        y: h * 0.42,
+        life: 0,
+        maxLife: 1.1
+      });
+    } else {
+      this.juiceManager.triggerHitStop(0.06, 0.2);
+      this.squashX = 1.25;
+      this.squashY = 0.75;
+      this.spawnPixelBurst(0, -18, '#ef4444', 18);
+      this.floatingTexts.push({
+        id: `ft-${Date.now()}`,
+        text: 'KURANG TEPAT!',
+        color: '#f87171',
+        x: w * 0.5,
+        y: h * 0.45,
+        life: 0,
+        maxLife: 1.0
+      });
+    }
   }
 
   public setMode(
@@ -309,1962 +639,2194 @@ export class SceneController {
     initialQuestion?: QuestionItem,
     pack?: QuestionPack
   ): void {
-    this.currentMode = mode;
     if (pack) {
-      this.activeQuestionPack = pack;
+      this.pack = pack;
     }
-    if (initialQuestion) {
-      this.activeRunnerQuestion = initialQuestion;
-    }
-    this.rebuildActiveScene();
+    this.activeGame = mode;
+    this.playerX = 0;
+    this.playerZ = 3;
+    this.playerY = 0;
+    this.playerVy = 0;
+    this.activeQuestion = initialQuestion || this.pickRandomQuestion();
+
+    // Reset mode-specific states
+    this.runnerLane = 1;
+    this.runnerDistance = 0;
+    this.runnerCoins = 0;
+    this.runnerLives = 3;
+    this.runnerSpeed = 18;
+    this.runnerGooseDist = 12;
+    this.runnerGateZ = -28;
+    this.towerFloor = 0;
+    this.bridgeStep = 0;
+    this.castleMonsterProgress = 0;
+    this.architectFloors = 1;
+    this.architectTilt = 0;
+    this.mazeStage = 0;
+    this.robotCol = 2;
+    this.robotRow = 3;
+    this.robotKeyframes = [];
+    this.tugRopeOffset = 0;
+    this.bossHitFlash = 0;
+    this.bossBeamPillar = -1;
+  }
+
+  public setTowerFloorVisual(nextFloor: number, fell: boolean): void {
+    this.towerFloor = nextFloor;
+    this.spawnPixelBurst(0, -20, fell ? '#ef4444' : '#22c55e', 18);
+  }
+
+  public resolveBridgeStepVisual(
+    stepIdx: number,
+    _chosenIdx: number,
+    panelSolid: boolean
+  ): void {
+    this.bridgeStep = panelSolid ? stepIdx + 1 : stepIdx;
+    this.spawnPixelBurst(0, -15, panelSolid ? '#38bdf8' : '#ef4444', 16);
   }
 
   public triggerCastleCannon(isCorrect: boolean): void {
-    if (this.batch2Module instanceof PertahananKastilGame) {
-      this.batch2Module.triggerAnswerAction(isCorrect);
+    this.castleCannonFlash = 0.5;
+    if (isCorrect) {
+      this.castleMonsterProgress = 0;
+      this.spawnPixelBurst(80, -20, '#f97316', 24);
     }
   }
 
   public triggerRocketRing(
-    ringIdx: number,
+    optionIdx: number,
     isCorrect: boolean,
-    nextQuestion?: QuestionItem
+    nextQ: QuestionItem
   ): void {
-    if (this.batch2Module instanceof BalapRoketGame) {
-      this.batch2Module.flyThroughRing(ringIdx, isCorrect, nextQuestion);
-      this.interactables = this.batch2Module.getInteractables();
-    }
+    this.rocketRingFlash = 0.45;
+    const angles = [-0.8, 0.8, -0.4, 0.4];
+    this.rocketX = Math.sin(angles[optionIdx] || 0) * 90;
+    this.rocketY = (optionIdx < 2 ? -1 : 1) * 35;
+    this.activeQuestion = nextQ;
+    this.spawnPixelBurst(
+      this.rocketX,
+      this.rocketY,
+      isCorrect ? '#22d3ee' : '#ef4444',
+      20
+    );
   }
 
   public triggerArchitectDrop(
     isCorrect: boolean,
     tiltAngle: number,
-    offsetX: number
+    _offsetX: number
   ): void {
-    if (this.batch2Module instanceof ArsitekMenaraGame) {
-      this.batch2Module.dropFloorBlock(isCorrect, tiltAngle, offsetX);
+    if (isCorrect) {
+      this.architectFloors += 1;
     }
+    this.architectTilt = tiltAngle;
+    this.spawnPixelBurst(0, -35, isCorrect ? '#facc15' : '#ef4444', 18);
   }
 
   public triggerMazeGate(isCorrect: boolean): void {
-    if (this.batch2Module instanceof LabirinMinotaurGame) {
-      this.batch2Module.unlockNextGate(isCorrect);
+    if (isCorrect) {
+      this.mazeStage += 1;
     }
-  }
-
-  public aimCatapult(targetIdx: number): void {
-    if (this.batch2Module instanceof PanahanKatapelGame) {
-      this.batch2Module.updateParabolicArcPreview(targetIdx);
-    }
+    this.spawnPixelBurst(0, -20, isCorrect ? '#10b981' : '#ef4444', 18);
   }
 
   public triggerCatapultShot(
-    targetIdx: number,
+    optionIdx: number,
     isCorrect: boolean,
-    nextQuestion?: QuestionItem
+    nextQ: QuestionItem
   ): void {
-    if (this.batch2Module instanceof PanahanKatapelGame) {
-      this.batch2Module.fireCatapultAtTarget(
-        targetIdx,
-        isCorrect,
-        nextQuestion
-      );
-      this.interactables = this.batch2Module.getInteractables();
-    }
-  }
-
-  public runRobotCoderProgram(
-    commands: RobotCommandType[],
-    answerIdx: number,
-    nextQuestion?: QuestionItem
-  ): {
-    reachedStationIndex: number | null;
-    isCorrect: boolean;
-    hitLaser: boolean;
-  } | null {
-    if (this.batch3Module instanceof SirkuitLogikaGame) {
-      const res = this.batch3Module.executeRobotProgram(
-        commands,
-        answerIdx,
-        nextQuestion
-      );
-      this.interactables = this.batch3Module.getInteractables();
-      return res;
-    }
-    return null;
+    this.catapultTargetIdx = optionIdx;
+    this.catapultArcT = 0.01;
+    this.activeQuestion = nextQ;
+    this.spawnPixelBurst(0, -25, isCorrect ? '#f59e0b' : '#ef4444', 20);
   }
 
   public resetRobotCoder(): void {
-    if (this.batch3Module instanceof SirkuitLogikaGame) {
-      this.batch3Module.resetRobotToStart();
+    this.robotCol = 2;
+    this.robotRow = 3;
+    this.robotKeyframes = [];
+  }
+
+  public runRobotCoderProgram(
+    queue: RobotCommandType[],
+    answerIndex: number,
+    nextQ: QuestionItem
+  ): ReturnType<typeof simulateRobotProgram> & { isCorrect: boolean } {
+    const sim = simulateRobotProgram(2, 3, 0, queue);
+    this.robotKeyframes = sim.keyframes;
+    this.robotCol = sim.finalCol;
+    this.robotRow = sim.finalRow;
+    const isCorrect =
+      sim.reachedStationIndex === answerIndex && !sim.hitLaser;
+    if (isCorrect) {
+      this.activeQuestion = nextQ;
     }
+    this.spawnPixelBurst(0, -18, isCorrect ? '#a855f7' : '#ef4444', 18);
+    return { ...sim, isCorrect };
   }
 
   public triggerSubmarineChest(
     chestIdx: number,
     isCorrect: boolean,
-    nextQuestion?: QuestionItem
+    nextQ: QuestionItem
   ): void {
-    if (this.batch3Module instanceof SelamSamudraGame) {
-      this.batch3Module.pilotSubmarineToChest(
-        chestIdx,
-        isCorrect,
-        nextQuestion
-      );
-      this.interactables = this.batch3Module.getInteractables();
-    }
+    this.subTargetChest = chestIdx;
+    this.subSonarPulse = 1.0;
+    this.activeQuestion = nextQ;
+    this.spawnPixelBurst(0, -15, isCorrect ? '#06b6d4' : '#ef4444', 20);
   }
 
   public triggerChemPour(
     tubeIdx: number,
     isCorrect: boolean,
-    nextQuestion?: QuestionItem
+    nextQ: QuestionItem
   ): void {
-    if (this.batch3Module instanceof KokiKimiaGame) {
-      this.batch3Module.pourTestTube(tubeIdx, isCorrect, nextQuestion);
-      this.interactables = this.batch3Module.getInteractables();
-    }
+    this.chemPourTube = tubeIdx;
+    this.chemPourTimer = 0.8;
+    this.activeQuestion = nextQ;
+    this.spawnPixelBurst(0, -30, isCorrect ? '#ec4899' : '#ef4444', 24);
   }
 
   public triggerPinisiIsland(
     islandIdx: number,
     isCorrect: boolean,
-    nextQuestion?: QuestionItem
+    nextQ: QuestionItem
   ): void {
-    if (this.batch3Module instanceof EkspedisiPinisiGame) {
-      this.batch3Module.sailToIsland(islandIdx, isCorrect, nextQuestion);
-      this.interactables = this.batch3Module.getInteractables();
-    }
+    const target = PINISI_ISLAND_COORDS[islandIdx] || PINISI_ISLAND_COORDS[0];
+    this.pinisiShipX = target.x * 0.35;
+    this.pinisiShipZ = target.z * 0.35;
+    this.activeQuestion = nextQ;
+    this.spawnPixelBurst(0, -20, isCorrect ? '#14b8a6' : '#ef4444', 20);
   }
 
   public triggerGoalieKick(
-    chosenIdx: number,
-    answerIdx: number,
-    nextQuestion?: QuestionItem
+    zoneIdx: number,
+    answerIndex: number,
+    nextQ: QuestionItem
   ): void {
-    if (this.batch3Module instanceof PenjagaGawangGame) {
-      this.batch3Module.triggerPenaltyKick(chosenIdx, answerIdx, nextQuestion);
-      this.interactables = this.batch3Module.getInteractables();
-    }
+    const isCorrect = zoneIdx === answerIndex;
+    this.goalieDiveZone = zoneIdx;
+    this.goalieBallT = 1.0;
+    this.activeQuestion = nextQ;
+    soundManager.playGoalieWhistleAndKick(isCorrect);
+    this.spawnPixelBurst(0, -25, isCorrect ? '#22c55e' : '#ef4444', 22);
   }
 
   public triggerConveyorRoute(
     chuteIdx: number,
     isCorrect: boolean,
-    nextQuestion?: QuestionItem
+    nextQ: QuestionItem
   ): void {
-    if (this.batch3Module instanceof PabrikSortirGame) {
-      this.batch3Module.routeCargoToChute(chuteIdx, isCorrect, nextQuestion);
-      this.interactables = this.batch3Module.getInteractables();
-    }
+    this.conveyorGateIdx = chuteIdx;
+    this.activeQuestion = nextQ;
+    soundManager.playFactoryStampOrAlarm(isCorrect);
+    this.spawnPixelBurst(0, -20, isCorrect ? '#f97316' : '#ef4444', 20);
   }
 
   public aimPrismMonument(monumentIdx: number): void {
-    if (this.batch3Module instanceof TebakBangunGame) {
-      this.batch3Module.aimPrismAtMonument(monumentIdx);
-    }
+    this.prismAimIdx = monumentIdx;
   }
 
   public triggerPrismLaser(
-    monumentIdx: number,
+    aimedIdx: number,
     isCorrect: boolean,
-    nextQuestion?: QuestionItem
+    nextQ: QuestionItem
   ): void {
-    if (this.batch3Module instanceof TebakBangunGame) {
-      this.batch3Module.firePrismLaser(monumentIdx, isCorrect, nextQuestion);
-      this.interactables = this.batch3Module.getInteractables();
-    }
+    this.prismAimIdx = aimedIdx;
+    this.prismLaserTimer = 0.75;
+    this.activeQuestion = nextQ;
+    soundManager.playPrismLaser(isCorrect);
+    this.spawnPixelBurst(0, -25, isCorrect ? '#38bdf8' : '#ef4444', 24);
   }
 
-  public triggerTugOfWarPull(
-    newRopeOffset: number,
-    isCorrect: boolean
-  ): void {
-    if (this.batch3Module instanceof TarikTambangGame) {
-      this.batch3Module.triggerTugPull(newRopeOffset, isCorrect);
-    }
+  public triggerTugOfWarPull(ropeOffset: number, isCorrect: boolean): void {
+    this.tugRopeOffset = ropeOffset;
+    soundManager.playTugPull(isCorrect);
+    this.spawnPixelBurst(0, -20, isCorrect ? '#eab308' : '#ef4444', 20);
   }
 
   public triggerBossPillarAttack(
     pillarIdx: number,
     isCorrect: boolean,
-    isUltimate: boolean,
-    bossDefeated: boolean,
-    nextQuestion?: QuestionItem
+    isUltimateBeam: boolean,
+    _victory: boolean,
+    nextQ: QuestionItem
   ): void {
-    if (this.batch3Module instanceof ArenaBossGame) {
-      this.batch3Module.triggerPillarCounterAttack(
-        pillarIdx,
-        isCorrect,
-        isUltimate,
-        bossDefeated,
-        nextQuestion
-      );
-      this.interactables = this.batch3Module.getInteractables();
-    }
-  }
-
-  public setWardrobe(
-    uniform: CostumeUniformId,
-    accessories: AccessoryId[]
-  ): void {
-    this.uniformId = uniform;
-    this.accessories = [...accessories];
-    if (this.playerAvatar && this.playerAvatar.parent) {
-      const parent = this.playerAvatar.parent;
-      const pos = this.playerAvatar.position.clone();
-      const rotY = this.playerAvatar.rotation.y;
-      this.disposeObject3D(this.playerAvatar);
-      parent.remove(this.playerAvatar);
-
-      this.playerAvatar = createStudentAvatar(this.uniformId, this.accessories);
-      this.playerAvatar.position.copy(pos);
-      this.playerAvatar.rotation.y = rotY;
-      parent.add(this.playerAvatar);
-    }
-  }
-
-  // Strict Scene Lifecycle & Memory Management (`disposeScene()`)
-  private disposeObject3D(root: THREE.Object3D): void {
-    root.traverse((obj) => {
-      const mesh = obj as THREE.Mesh;
-      if (mesh.geometry) {
-        mesh.geometry.dispose();
-      }
-      if (mesh.material) {
-        const mats = Array.isArray(mesh.material)
-          ? mesh.material
-          : [mesh.material];
-        for (const m of mats) {
-          const std = m as THREE.MeshStandardMaterial;
-          if (std.map) std.map.dispose();
-          if (std.emissiveMap) std.emissiveMap.dispose();
-          if (std.bumpMap) std.bumpMap.dispose();
-          m.dispose();
-        }
-      }
-    });
-  }
-
-  public disposeScene(): void {
-    if (this.batch2Module) {
-      this.batch2Module.cleanup();
-      this.batch2Module = null;
-    }
-    if (this.batch3Module) {
-      this.batch3Module.dispose();
-      this.batch3Module = null;
-    }
-    this.interactables = [];
-    this.vehicles = [];
-    this.books = [];
-    this.runnerObstacles = [];
-    this.runnerGate = null;
-    this.gooseMesh = null;
-    this.fountainSpout = null;
-    this.towerPlatforms = [];
-    this.towerCrown = null;
-    this.bridgePanels = [];
-    this.pasarDisplayGroup = null;
-
-    this.disposeObject3D(this.activeGroup);
-    this.activeGroup.clear();
-  }
-
-  public rebuildActiveScene(): void {
-    this.disposeScene();
-
-    const biomeCfg =
-      BIOMES.find((b) => b.id === this.currentBiome) || BIOMES[0];
-    this.scene.background = new THREE.Color(biomeCfg.skyColor);
-    this.scene.fog = new THREE.FogExp2(biomeCfg.fogColor, 0.011);
-
-    // Spawn player avatar
-    this.playerAvatar = createStudentAvatar(this.uniformId, this.accessories);
-    this.playerJumpY = 0;
-    this.playerVelY = 0;
-
-    if (this.currentMode === 'jelajah_dunia') {
-      this.buildJelajahDunia(biomeCfg);
-    } else if (this.currentMode === 'lari_kilat') {
-      this.buildLariKilat(biomeCfg);
-    } else if (this.currentMode === 'jatuh_bangun') {
-      this.buildJatuhBangun(biomeCfg);
-    } else if (this.currentMode === 'detektif_kota') {
-      this.buildDetektifKota(biomeCfg);
-    } else if (this.currentMode === 'pasar_nusantara') {
-      this.buildPasarNusantara(biomeCfg);
-    } else if (this.currentMode === 'jembatan_juara') {
-      this.buildJembatanJuara(biomeCfg);
-    } else if (this.currentMode === 'pertahanan_kastil') {
-      this.batch2Module = new PertahananKastilGame();
-      this.batch2Module.init(
-        this.activeGroup,
-        this.camera,
-        this.activeQuestionPack
-      );
-    } else if (this.currentMode === 'balap_roket') {
-      this.scene.background = new THREE.Color(0x090d16);
-      this.scene.fog = new THREE.FogExp2(0x090d16, 0.012);
-      const roketGame = new BalapRoketGame(this.maxAnisotropy);
-      roketGame.init(
-        this.activeGroup,
-        this.camera,
-        this.activeQuestionPack
-      );
-      this.interactables = roketGame.getInteractables();
-      this.batch2Module = roketGame;
-    } else if (this.currentMode === 'arsitek_menara') {
-      this.batch2Module = new ArsitekMenaraGame();
-      this.batch2Module.init(
-        this.activeGroup,
-        this.camera,
-        this.activeQuestionPack
-      );
-    } else if (this.currentMode === 'labirin_minotaur') {
-      this.batch2Module = new LabirinMinotaurGame(
-        this.uniformId,
-        this.accessories
-      );
-      this.batch2Module.init(
-        this.activeGroup,
-        this.camera,
-        this.activeQuestionPack
-      );
-    } else if (this.currentMode === 'panahan_katapel') {
-      const katapelGame = new PanahanKatapelGame(this.maxAnisotropy);
-      katapelGame.init(
-        this.activeGroup,
-        this.camera,
-        this.activeQuestionPack
-      );
-      this.interactables = katapelGame.getInteractables();
-      this.batch2Module = katapelGame;
-    } else if (this.currentMode === 'sirkuit_logika') {
-      this.scene.background = new THREE.Color(0x070b19);
-      this.scene.fog = new THREE.FogExp2(0x070b19, 0.016);
-      const robotGame = new SirkuitLogikaGame();
-      robotGame.init(
-        {
-          scene: this.scene,
-          sceneGroup: this.activeGroup,
-          camera: this.camera,
-          maxAnisotropy: this.maxAnisotropy
-        },
-        this.activeQuestionPack,
-        (_ok, idx) => this.callbacks.onBatch2OptionClick?.(idx),
-        () => {}
-      );
-      this.interactables = robotGame.getInteractables();
-      this.batch3Module = robotGame;
-    } else if (this.currentMode === 'selam_samudra') {
-      const subGame = new SelamSamudraGame();
-      subGame.init(
-        {
-          scene: this.scene,
-          sceneGroup: this.activeGroup,
-          camera: this.camera,
-          maxAnisotropy: this.maxAnisotropy
-        },
-        this.activeQuestionPack,
-        (_ok, idx) => this.callbacks.onBatch2OptionClick?.(idx),
-        () => {}
-      );
-      this.interactables = subGame.getInteractables();
-      this.batch3Module = subGame;
-    } else if (this.currentMode === 'koki_kimia') {
-      this.scene.background = new THREE.Color(0x0f172a);
-      this.scene.fog = new THREE.FogExp2(0x0f172a, 0.018);
-      const chemGame = new KokiKimiaGame();
-      chemGame.init(
-        {
-          scene: this.scene,
-          sceneGroup: this.activeGroup,
-          camera: this.camera,
-          maxAnisotropy: this.maxAnisotropy
-        },
-        this.activeQuestionPack,
-        (_ok, idx) => this.callbacks.onBatch2OptionClick?.(idx),
-        () => {}
-      );
-      this.interactables = chemGame.getInteractables();
-      this.batch3Module = chemGame;
-    } else if (this.currentMode === 'ekspedisi_pinisi') {
-      this.scene.background = new THREE.Color(0x0c4a6e);
-      this.scene.fog = new THREE.FogExp2(0x0c4a6e, 0.011);
-      const pinisiGame = new EkspedisiPinisiGame();
-      pinisiGame.init(
-        {
-          scene: this.scene,
-          sceneGroup: this.activeGroup,
-          camera: this.camera,
-          maxAnisotropy: this.maxAnisotropy
-        },
-        this.activeQuestionPack,
-        (_ok, idx) => this.callbacks.onBatch2OptionClick?.(idx),
-        () => {}
-      );
-      this.interactables = pinisiGame.getInteractables();
-      this.batch3Module = pinisiGame;
-    } else if (this.currentMode === 'penjaga_gawang') {
-      this.scene.background = new THREE.Color(0x0f172a);
-      this.scene.fog = new THREE.FogExp2(0x0f172a, 0.012);
-      const goalieGame = new PenjagaGawangGame();
-      goalieGame.init(
-        {
-          scene: this.scene,
-          sceneGroup: this.activeGroup,
-          camera: this.camera,
-          maxAnisotropy: this.maxAnisotropy
-        },
-        this.activeQuestionPack,
-        (_ok, idx) => this.callbacks.onBatch2OptionClick?.(idx),
-        () => {}
-      );
-      this.interactables = goalieGame.getInteractables();
-      this.batch3Module = goalieGame;
-    } else if (this.currentMode === 'pabrik_sortir') {
-      this.scene.background = new THREE.Color(0x090d16);
-      this.scene.fog = new THREE.FogExp2(0x090d16, 0.015);
-      const sorterGame = new PabrikSortirGame();
-      sorterGame.init(
-        {
-          scene: this.scene,
-          sceneGroup: this.activeGroup,
-          camera: this.camera,
-          maxAnisotropy: this.maxAnisotropy
-        },
-        this.activeQuestionPack,
-        (_ok, idx) => this.callbacks.onBatch2OptionClick?.(idx),
-        () => {}
-      );
-      this.interactables = sorterGame.getInteractables();
-      this.batch3Module = sorterGame;
-    } else if (this.currentMode === 'tebak_bangun') {
-      this.scene.background = new THREE.Color(0x070b19);
-      this.scene.fog = new THREE.FogExp2(0x070b19, 0.015);
-      const prismGame = new TebakBangunGame();
-      prismGame.init(
-        {
-          scene: this.scene,
-          sceneGroup: this.activeGroup,
-          camera: this.camera,
-          maxAnisotropy: this.maxAnisotropy
-        },
-        this.activeQuestionPack,
-        (_ok, idx) => this.callbacks.onBatch2OptionClick?.(idx),
-        () => {}
-      );
-      this.interactables = prismGame.getInteractables();
-      this.batch3Module = prismGame;
-    } else if (this.currentMode === 'tarik_tambang') {
-      this.scene.background = new THREE.Color(0x1c1917);
-      this.scene.fog = new THREE.FogExp2(0x1c1917, 0.014);
-      const tugGame = new TarikTambangGame();
-      tugGame.init(
-        {
-          scene: this.scene,
-          sceneGroup: this.activeGroup,
-          camera: this.camera,
-          maxAnisotropy: this.maxAnisotropy
-        },
-        this.activeQuestionPack,
-        (_ok, idx) => this.callbacks.onBatch2OptionClick?.(idx),
-        () => {}
-      );
-      this.interactables = tugGame.getInteractables();
-      this.batch3Module = tugGame;
-    } else if (this.currentMode === 'arena_boss') {
-      this.scene.background = new THREE.Color(0x18181b);
-      this.scene.fog = new THREE.FogExp2(0x18181b, 0.012);
-      const bossGame = new ArenaBossGame(this.uniformId, this.accessories);
-      bossGame.init(
-        {
-          scene: this.scene,
-          sceneGroup: this.activeGroup,
-          camera: this.camera,
-          maxAnisotropy: this.maxAnisotropy
-        },
-        this.activeQuestionPack,
-        (_ok, idx) => this.callbacks.onBatch2OptionClick?.(idx),
-        () => {}
-      );
-      this.interactables = bossGame.getInteractables();
-      this.batch3Module = bossGame;
-    }
-
-    if (!this.isSoftwareGl) {
-      this.renderer.compile(this.scene, this.camera);
-    }
-  }
-
-  // =========================================================================
-  // 1. JELAJAH DUNIA (Open-World Hub across 5 Biomes)
-  // =========================================================================
-  private buildJelajahDunia(biomeCfg: (typeof BIOMES)[0]): void {
-    // Ground terrain
-    const groundGeo = new THREE.CylinderGeometry(85, 85, 1.2, 48);
-    const groundMat = new THREE.MeshStandardMaterial({
-      color: biomeCfg.groundColor,
-      roughness: 0.85,
-      metalness: 0.05
-    });
-    const ground = new THREE.Mesh(groundGeo, groundMat);
-    ground.position.y = -0.6;
-    ground.receiveShadow = true;
-    this.activeGroup.add(ground);
-
-    // Cross Roads + Ring Plaza
-    const roadMat = new THREE.MeshStandardMaterial({
-      color: biomeCfg.roadColor,
-      roughness: 0.75,
-      metalness: 0.1
-    });
-    const roadNS = new THREE.Mesh(new THREE.BoxGeometry(7.2, 0.06, 96), roadMat);
-    roadNS.position.y = 0.03;
-    roadNS.receiveShadow = true;
-    const roadEW = new THREE.Mesh(new THREE.BoxGeometry(96, 0.06, 7.2), roadMat);
-    roadEW.position.y = 0.04;
-    roadEW.receiveShadow = true;
-    const ringPlaza = new THREE.Mesh(
-      new THREE.CylinderGeometry(11, 11, 0.08, 32),
-      roadMat
+    this.bossBeamPillar = pillarIdx;
+    this.bossHitFlash = 0.7;
+    this.bossUltimateActive = isUltimateBeam;
+    this.activeQuestion = nextQ;
+    soundManager.playBossRoarOrBeam(isUltimateBeam, isCorrect);
+    this.spawnPixelBurst(
+      0,
+      -40,
+      isCorrect ? (isUltimateBeam ? '#22d3ee' : '#f43f5e') : '#ef4444',
+      30
     );
-    ringPlaza.position.y = 0.04;
-    this.activeGroup.add(roadNS, roadEW, ringPlaza);
-
-    // Central Fountain / Biome Monument
-    const fountain = createFountain();
-    this.fountainSpout = fountain.getObjectByName('FountainSpout') || null;
-    this.activeGroup.add(fountain);
-
-    // 5 Subject Buildings around the hub
-    const subjects = [
-      {
-        subject: 'Matematika',
-        sub: 'Aljabar · Geometri · Aritmetika',
-        color: 0x2563eb,
-        accent: '#60a5fa',
-        x: -20,
-        z: -18,
-        rotY: Math.PI / 6
-      },
-      {
-        subject: 'Sains',
-        sub: 'Fisika · Biologi · Astronomi',
-        color: 0x059669,
-        accent: '#34d399',
-        x: 20,
-        z: -18,
-        rotY: -Math.PI / 6
-      },
-      {
-        subject: 'Bahasa',
-        sub: 'Literasi · Sastra · KBBI',
-        color: 0xd97706,
-        accent: '#fbbf24',
-        x: -24,
-        z: 12,
-        rotY: Math.PI / 2.5
-      },
-      {
-        subject: 'Sejarah',
-        sub: 'Nusantara · Budaya · Dunia',
-        color: 0xb91c1c,
-        accent: '#f87171',
-        x: 24,
-        z: 12,
-        rotY: -Math.PI / 2.5
-      },
-      {
-        subject: 'Coding',
-        sub: 'Algoritma · Logika · Robotik',
-        color: 0x7c3aed,
-        accent: '#c084fc',
-        x: 0,
-        z: -28,
-        rotY: 0
-      }
-    ];
-
-    subjects.forEach((b) => {
-      const bld = createSubjectBuilding(
-        b.subject,
-        b.sub,
-        b.color,
-        b.accent,
-        this.maxAnisotropy
-      );
-      bld.position.set(b.x, 0, b.z);
-      bld.rotation.y = b.rotY;
-      bld.userData = {
-        interactType: 'building',
-        subject: b.subject,
-        title: `Gedung ${b.subject}`
-      };
-      this.activeGroup.add(bld);
-      this.interactables.push(bld);
-    });
-
-    // 4 Interactive NPC Warga with "!"
-    const npcs = [
-      { name: 'Pak Guru Budi', subject: 'Matematika', hex: 0x2563eb, x: -9, z: -8 },
-      { name: 'Dokter Rani', subject: 'Sains', hex: 0x10b981, x: 9, z: -8 },
-      { name: 'Sastrawan Seno', subject: 'Bahasa', hex: 0xf59e0b, x: -10, z: 8 },
-      { name: 'Nakhoda Alif', subject: 'Sejarah', hex: 0xef4444, x: 10, z: 8 }
-    ];
-
-    npcs.forEach((n) => {
-      const npcMesh = createNPCWithMarker(n.name, n.hex, this.maxAnisotropy);
-      npcMesh.position.set(n.x, 0, n.z);
-      npcMesh.lookAt(0, 0, 0);
-      npcMesh.userData = {
-        interactType: 'npc',
-        npcName: n.name,
-        subject: n.subject
-      };
-      this.activeGroup.add(npcMesh);
-      this.interactables.push(npcMesh);
-    });
-
-    // 5 Collectible Knowledge Books ("Buku Ilmu")
-    const bookPlacements = [
-      { id: 'book-mat', subject: 'Matematika', x: -14, z: 0, color: 0x3b82f6 },
-      { id: 'book-sai', subject: 'Sains', x: 14, z: 0, color: 0x10b981 },
-      { id: 'book-bah', subject: 'Bahasa', x: 0, z: 22, color: 0xf59e0b },
-      { id: 'book-sej', subject: 'Sejarah', x: -15, z: -26, color: 0xef4444 },
-      { id: 'book-cod', subject: 'Coding', x: 15, z: -26, color: 0xa855f7 }
-    ];
-
-    bookPlacements.forEach((bp) => {
-      const book = createKnowledgeBook(bp.color);
-      book.position.set(bp.x, 0, bp.z);
-      book.userData = {
-        interactType: 'book',
-        bookId: bp.id,
-        subject: bp.subject
-      };
-      this.activeGroup.add(book);
-      this.interactables.push(book);
-      this.books.push({
-        id: bp.id,
-        subject: bp.subject,
-        group: book,
-        collected: false
-      });
-    });
-
-    // Biome-specific Vehicles & Landmarks
-    if (this.currentBiome === 'nusantara' || this.currentBiome === 'samudra') {
-      const pinisi1 = createVehicle('pinisi');
-      pinisi1.position.set(-16, 0, 18);
-      this.activeGroup.add(pinisi1);
-      this.vehicles.push({
-        mesh: pinisi1,
-        speed: 0.45,
-        axis: 'circle',
-        dir: 1,
-        radius: 34,
-        angle: 0
-      });
-    } else if (this.currentBiome === 'angkasa') {
-      const rocket = createVehicle('rocket');
-      rocket.position.set(14, 0, -12);
-      this.activeGroup.add(rocket);
-      this.vehicles.push({
-        mesh: rocket,
-        speed: 0.55,
-        axis: 'circle',
-        dir: 1,
-        radius: 30,
-        angle: 1.5
-      });
-    } else {
-      const bus = createVehicle('school_bus');
-      bus.position.set(-22, 0, 2);
-      bus.rotation.y = Math.PI / 2;
-      this.activeGroup.add(bus);
-      this.vehicles.push({
-        mesh: bus,
-        speed: 7.5,
-        axis: 'x',
-        dir: 1
-      });
-
-      const car = createVehicle('car');
-      car.position.set(2, 0, -24);
-      this.activeGroup.add(car);
-      this.vehicles.push({
-        mesh: car,
-        speed: 9.0,
-        axis: 'z',
-        dir: 1
-      });
-    }
-
-    // InstancedMesh for 60 Trees / Coral Reefs / Asteroids around perimeter
-    this.buildBiomeInstancedFoliage(this.currentBiome);
-
-    // Position Player on open road facing the central fountain & Coding building
-    this.playerPos.set(0, 0, 15);
-    this.playerRotY = Math.PI;
-    if (this.playerAvatar) {
-      this.playerAvatar.position.copy(this.playerPos);
-      this.playerAvatar.rotation.y = this.playerRotY;
-      this.activeGroup.add(this.playerAvatar);
-    }
-  }
-
-  private buildBiomeInstancedFoliage(biome: BiomeId): void {
-    const count = 48;
-    const trunkGeo = new THREE.CylinderGeometry(0.28, 0.42, 2.2, 8);
-    const trunkMat = new THREE.MeshStandardMaterial({
-      color: biome === 'angkasa' ? 0x64748b : 0x78350f,
-      roughness: 0.85
-    });
-    const crownGeo =
-      biome === 'angkasa'
-        ? new THREE.DodecahedronGeometry(1.4, 0)
-        : biome === 'samudra'
-        ? new THREE.TorusKnotGeometry(0.85, 0.28, 24, 6)
-        : new THREE.ConeGeometry(1.65, 3.6, 8);
-
-    const crownColor =
-      biome === 'samudra'
-        ? 0xf43f5e
-        : biome === 'angkasa'
-        ? 0x94a3b8
-        : biome === 'nusantara'
-        ? 0x16a34a
-        : 0x15803d;
-
-    const crownMat = new THREE.MeshStandardMaterial({
-      color: crownColor,
-      roughness: 0.65,
-      metalness: 0.1
-    });
-
-    const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, count);
-    const crowns = new THREE.InstancedMesh(crownGeo, crownMat, count);
-    trunks.castShadow = !this.isSoftwareGl;
-    crowns.castShadow = !this.isSoftwareGl;
-
-    const tint = new THREE.Color();
-    for (let i = 0; i < count; i++) {
-      const angle = (i / count) * Math.PI * 2;
-      const radius = 36 + (i % 3) * 8;
-      const x = Math.cos(angle) * radius;
-      const z = Math.sin(angle) * radius;
-      const scale = 0.85 + (i % 4) * 0.15;
-
-      this._dummy.position.set(x, 1.1 * scale, z);
-      this._dummy.rotation.set(0, angle, 0);
-      this._dummy.scale.setScalar(scale);
-      this._dummy.updateMatrix();
-      trunks.setMatrixAt(i, this._dummy.matrix);
-
-      this._dummy.position.set(x, 3.1 * scale, z);
-      this._dummy.updateMatrix();
-      crowns.setMatrixAt(i, this._dummy.matrix);
-
-      tint.setHSL(
-        (biome === 'samudra' ? 0.92 : 0.34) + (i % 5) * 0.02,
-        0.7,
-        0.42
-      );
-      crowns.setColorAt(i, tint);
-    }
-
-    trunks.instanceMatrix.needsUpdate = true;
-    crowns.instanceMatrix.needsUpdate = true;
-    if (crowns.instanceColor) crowns.instanceColor.needsUpdate = true;
-    trunks.computeBoundingSphere();
-    crowns.computeBoundingSphere();
-
-    this.activeGroup.add(trunks, crowns);
-  }
-
-  // =========================================================================
-  // 2. LARI KILAT (3D 4-Lane Endless Runner + Answer Gates + Giant Goose)
-  // =========================================================================
-  private buildLariKilat(biomeCfg: (typeof BIOMES)[0]): void {
-    this.runnerLane = 1;
-    this.runnerDistance = 0;
-    this.runnerCoins = 0;
-    this.runnerLives = 3;
-    this.gooseDistance = 7.5;
-    this.activePowerUp = null;
-    this.powerUpTimer = 0;
-
-    // Highway Track
-    const highway = new THREE.Mesh(
-      new THREE.BoxGeometry(14.5, 0.5, 180),
-      new THREE.MeshStandardMaterial({
-        color: biomeCfg.roadColor,
-        roughness: 0.75
-      })
-    );
-    highway.position.set(0, -0.25, -55);
-    highway.receiveShadow = true;
-    this.activeGroup.add(highway);
-
-    // 4-Lane Divider Stripes
-    const stripeMat = new THREE.MeshBasicMaterial({ color: 0xfacc15 });
-    [-3.0, 0, 3.0].forEach((lx) => {
-      const line = new THREE.Mesh(
-        new THREE.BoxGeometry(0.14, 0.04, 170),
-        stripeMat
-      );
-      line.position.set(lx, 0.03, -55);
-      this.activeGroup.add(line);
-    });
-
-    // Side Guardrails
-    const railMat = new THREE.MeshStandardMaterial({
-      color: 0x38bdf8,
-      metalness: 0.5,
-      roughness: 0.3
-    });
-    [-7.3, 7.3].forEach((rx) => {
-      const rail = new THREE.Mesh(
-        new THREE.BoxGeometry(0.4, 0.9, 180),
-        railMat
-      );
-      rail.position.set(rx, 0.45, -55);
-      this.activeGroup.add(rail);
-    });
-
-    // Player at Z=0
-    this.playerPos.set(getLaneX(this.runnerLane), 0, 0);
-    this.playerRotY = Math.PI;
-    if (this.playerAvatar) {
-      this.playerAvatar.position.copy(this.playerPos);
-      this.playerAvatar.rotation.y = Math.PI;
-      this.activeGroup.add(this.playerAvatar);
-    }
-
-    // Chasing Giant Goose behind player at Z = +gooseDistance
-    this.gooseMesh = createGiantGoose();
-    this.gooseMesh.position.set(this.playerPos.x, 0, this.gooseDistance);
-    this.activeGroup.add(this.gooseMesh);
-
-    // Spawn Obstacles, Coins, and Power-Ups
-    const barrierGeo = new THREE.BoxGeometry(2.1, 1.15, 0.6);
-    const barrierMat = new THREE.MeshStandardMaterial({
-      color: 0xef4444,
-      roughness: 0.4
-    });
-    const coinGeo = new THREE.CylinderGeometry(0.48, 0.48, 0.16, 16);
-    coinGeo.rotateX(Math.PI / 2);
-    const coinMat = new THREE.MeshStandardMaterial({
-      color: 0xfacc15,
-      metalness: 0.75,
-      roughness: 0.2
-    });
-    const powerMat = new THREE.MeshStandardMaterial({
-      color: 0x06b6d4,
-      emissive: 0x0ea5e9,
-      emissiveIntensity: 0.7,
-      roughness: 0.2
-    });
-
-    for (let i = 0; i < 18; i++) {
-      const lane = i % 4;
-      const z = -18 - i * 8.5;
-      const isCoin = i % 3 !== 0;
-      const isPower = i === 5 || i === 11 || i === 16;
-
-      const mesh = new THREE.Mesh(
-        isPower
-          ? new THREE.OctahedronGeometry(0.65, 0)
-          : isCoin
-          ? coinGeo
-          : barrierGeo,
-        isPower ? powerMat : isCoin ? coinMat : barrierMat
-      );
-      mesh.position.set(getLaneX(lane), isCoin || isPower ? 1.0 : 0.6, z);
-      mesh.castShadow = !this.isSoftwareGl;
-      this.activeGroup.add(mesh);
-
-      const pTypes: ('hoverboard' | 'magnet' | 'lightning')[] = [
-        'hoverboard',
-        'magnet',
-        'lightning'
-      ];
-      this.runnerObstacles.push({
-        mesh,
-        lane,
-        z,
-        type: isPower ? pTypes[i % 3] : isCoin ? 'coin' : 'barrier',
-        active: true
-      });
-    }
-
-    // Spawn 4-Lane Answer Gate (A / B / C / D)
-    this.spawnRunnerAnswerGate(-72);
-  }
-
-  public updateRunnerQuestionGate(question: QuestionItem): void {
-    this.activeRunnerQuestion = question;
-    if (this.currentMode === 'lari_kilat') {
-      if (this.runnerGate) {
-        this.disposeObject3D(this.runnerGate.group);
-        this.activeGroup.remove(this.runnerGate.group);
-      }
-      this.spawnRunnerAnswerGate(-70);
-    }
-  }
-
-  private spawnRunnerAnswerGate(zPos: number): void {
-    const gateGroup = new THREE.Group();
-    gateGroup.position.set(0, 0, zPos);
-
-    const letters = ['A', 'B', 'C', 'D'];
-    const colors = ['#f59e0b', '#06b6d4', '#10b981', '#ec4899'];
-    const options = this.activeRunnerQuestion?.options || [
-      'Opsi A',
-      'Opsi B',
-      'Opsi C',
-      'Opsi D'
-    ];
-
-    RUNNER_LANES.forEach((lx, idx) => {
-      const tex = createSignTexture(
-        `GERBANG ${letters[idx]}`,
-        options[idx],
-        '#0f172a',
-        colors[idx],
-        this.maxAnisotropy
-      );
-      const panel = new THREE.Mesh(
-        new THREE.BoxGeometry(2.75, 2.8, 0.28),
-        new THREE.MeshBasicMaterial({
-          map: tex,
-          transparent: true,
-          opacity: 0.92
-        })
-      );
-      panel.position.set(lx, 1.6, 0);
-      gateGroup.add(panel);
-    });
-
-    this.activeGroup.add(gateGroup);
-    this.runnerGate = {
-      group: gateGroup,
-      z: zPos,
-      resolved: false
-    };
-  }
-
-  // =========================================================================
-  // 3. JATUH BANGUN (3D 4-Floor Hexagonal Tower Survival + Crown at Peak)
-  // =========================================================================
-  private buildJatuhBangun(biomeCfg: (typeof BIOMES)[0]): void {
-    this.towerFloor = 0;
-    this.towerTargetY = 0;
-    this.towerPlatforms = [];
-
-    // Lava / Energy Pool Base below Floor 0
-    const pool = new THREE.Mesh(
-      new THREE.CylinderGeometry(24, 24, 0.8, 32),
-      new THREE.MeshStandardMaterial({
-        color: biomeCfg.groundColor,
-        emissive: 0x0f172a,
-        roughness: 0.6
-      })
-    );
-    pool.position.y = -4.5;
-    this.activeGroup.add(pool);
-
-    const floorColors = [0x3b82f6, 0x10b981, 0xf59e0b, 0x8b5cf6, 0xeab308];
-
-    for (let f = 0; f <= 4; f++) {
-      const floorGroup = new THREE.Group();
-      floorGroup.position.y = f * 4.5;
-
-      // Central Hexagonal Platform + 6 Surrounding Hex Tiles
-      const hexGeo = new THREE.CylinderGeometry(2.2, 2.2, 0.55, 6);
-      const hexMat = new THREE.MeshStandardMaterial({
-        color: floorColors[f],
-        roughness: 0.35,
-        metalness: 0.25
-      });
-
-      const centerHex = new THREE.Mesh(hexGeo, hexMat);
-      centerHex.position.y = -0.28;
-      centerHex.receiveShadow = true;
-      floorGroup.add(centerHex);
-
-      for (let h = 0; h < 6; h++) {
-        const angle = (h / 6) * Math.PI * 2;
-        const ringHex = new THREE.Mesh(hexGeo, hexMat.clone());
-        ringHex.position.set(
-          Math.cos(angle) * 3.9,
-          -0.28,
-          Math.sin(angle) * 3.9
-        );
-        ringHex.receiveShadow = true;
-        floorGroup.add(ringHex);
-      }
-
-      this.activeGroup.add(floorGroup);
-      this.towerPlatforms.push(floorGroup);
-    }
-
-    // Golden Crown at Floor 4 (Peak)
-    const crownMat = new THREE.MeshStandardMaterial({
-      color: 0xfacc15,
-      emissive: 0xf59e0b,
-      emissiveIntensity: 0.45,
-      metalness: 0.85,
-      roughness: 0.15
-    });
-    this.towerCrown = new THREE.Mesh(
-      new THREE.OctahedronGeometry(1.1, 0),
-      crownMat
-    );
-    this.towerCrown.position.set(0, 4 * 4.5 + 2.2, 0);
-    this.activeGroup.add(this.towerCrown);
-
-    this.playerPos.set(0, 0, 0);
-    this.playerRotY = 0;
-    if (this.playerAvatar) {
-      this.playerAvatar.position.copy(this.playerPos);
-      this.activeGroup.add(this.playerAvatar);
-    }
-  }
-
-  public setTowerFloorVisual(floor: number, fell: boolean): void {
-    if (fell && this.towerPlatforms[this.towerFloor]) {
-      // Visual shake on previous platform tiles
-      const prev = this.towerPlatforms[this.towerFloor];
-      prev.children.forEach((tile, idx) => {
-        if (idx > 0) tile.position.y = -0.9;
-      });
-    }
-    this.towerFloor = Math.max(0, Math.min(4, floor));
-    this.towerTargetY = this.towerFloor * 4.5;
-    this.playerVelY = 8.0;
-  }
-
-  // =========================================================================
-  // 4. DETEKTIF KOTA ILMU (4 Crime Scene TKP Mystery Investigation)
-  // =========================================================================
-  private buildDetektifKota(biomeCfg: (typeof BIOMES)[0]): void {
-    const ground = new THREE.Mesh(
-      new THREE.CylinderGeometry(52, 52, 1, 36),
-      new THREE.MeshStandardMaterial({
-        color: biomeCfg.roadColor,
-        roughness: 0.8
-      })
-    );
-    ground.position.y = -0.5;
-    ground.receiveShadow = true;
-    this.activeGroup.add(ground);
-
-    const activeCase = DETECTIVE_CASES[0];
-    const tkpCoords = [
-      { x: -12, z: -10, color: 0xf59e0b },
-      { x: 12, z: -10, color: 0x06b6d4 },
-      { x: -12, z: 10, color: 0x10b981 },
-      { x: 12, z: 10, color: 0xa855f7 }
-    ];
-
-    activeCase.tkpList.forEach((tkp, idx) => {
-      const coord = tkpCoords[idx];
-      const tkpGroup = new THREE.Group();
-      tkpGroup.position.set(coord.x, 0, coord.z);
-
-      // Glowing Police/Mystery Investigation Ring
-      const ring = new THREE.Mesh(
-        new THREE.RingGeometry(2.6, 3.1, 24),
-        new THREE.MeshBasicMaterial({
-          color: coord.color,
-          side: THREE.DoubleSide
-        })
-      );
-      ring.rotation.x = -Math.PI / 2;
-      ring.position.y = 0.04;
-      tkpGroup.add(ring);
-
-      // Evidence Pedestal
-      const ped = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.65, 0.85, 1.4, 12),
-        new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.5 })
-      );
-      ped.position.y = 0.7;
-      tkpGroup.add(ped);
-
-      // Witness NPC
-      const witness = createNPCWithMarker(
-        `TKP ${tkp.id}: ${tkp.witness}`,
-        coord.color,
-        this.maxAnisotropy
-      );
-      witness.position.set(1.6, 0, -0.8);
-      tkpGroup.add(witness);
-
-      tkpGroup.userData = {
-        interactType: 'tkp',
-        tkpId: tkp.id
-      };
-      this.activeGroup.add(tkpGroup);
-      this.interactables.push(tkpGroup);
-    });
-
-    this.playerPos.set(0, 0, 16);
-    this.playerRotY = Math.PI;
-    if (this.playerAvatar) {
-      this.playerAvatar.position.copy(this.playerPos);
-      this.playerAvatar.rotation.y = this.playerRotY;
-      this.activeGroup.add(this.playerAvatar);
-    }
-  }
-
-  // =========================================================================
-  // 5. PASAR NUSANTARA (3D Warung Shopkeeper & Visual Math Simulation)
-  // =========================================================================
-  private buildPasarNusantara(biomeCfg: (typeof BIOMES)[0]): void {
-    const floor = new THREE.Mesh(
-      new THREE.CylinderGeometry(36, 36, 1, 32),
-      new THREE.MeshStandardMaterial({
-        color: biomeCfg.groundColor,
-        roughness: 0.85
-      })
-    );
-    floor.position.y = -0.5;
-    floor.receiveShadow = true;
-    this.activeGroup.add(floor);
-
-    // 3D Wooden Warung Counter & Bamboo Canopy
-    const woodMat = new THREE.MeshStandardMaterial({
-      color: 0x92400e,
-      roughness: 0.7
-    });
-    const roofMat = new THREE.MeshStandardMaterial({
-      color: 0xb45309,
-      roughness: 0.6
-    });
-
-    const counter = new THREE.Mesh(
-      new THREE.BoxGeometry(10.5, 1.8, 2.4),
-      woodMat
-    );
-    counter.position.set(0, 0.9, 0);
-    counter.castShadow = true;
-    counter.receiveShadow = true;
-    this.activeGroup.add(counter);
-
-    const canopy = new THREE.Mesh(
-      new THREE.ConeGeometry(7.4, 2.0, 4),
-      roofMat
-    );
-    canopy.position.set(0, 6.8, -0.5);
-    canopy.rotation.y = Math.PI / 4;
-    this.activeGroup.add(canopy);
-
-    [-4.8, 4.8].forEach((px) => {
-      const post = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.16, 0.16, 5.8, 10),
-        woodMat
-      );
-      post.position.set(px, 2.9, -0.5);
-      this.activeGroup.add(post);
-    });
-
-    // Visual Math Props on the Warung Counter:
-    // Left: Brass Weighing Scale ("Timbangan Berat")
-    const brassMat = new THREE.MeshStandardMaterial({
-      color: 0xfacc15,
-      metalness: 0.75,
-      roughness: 0.25
-    });
-    const scaleBase = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.55, 0.7, 0.9, 14),
-      brassMat
-    );
-    scaleBase.position.set(-2.8, 2.25, 0.2);
-    const scalePan = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.85, 0.6, 0.22, 16),
-      brassMat
-    );
-    scalePan.position.set(-2.8, 2.8, 0.2);
-    this.activeGroup.add(scaleBase, scalePan);
-
-    // Center: Fractional Bika Ambon Cake Wheel ("Pecahan Kue 8 Bagian")
-    this.pasarDisplayGroup = new THREE.Group();
-    this.pasarDisplayGroup.position.set(0, 1.95, 0.25);
-    const sliceMat = new THREE.MeshStandardMaterial({
-      color: 0xf59e0b,
-      roughness: 0.45
-    });
-    for (let s = 0; s < 5; s++) {
-      const angle = (s / 8) * Math.PI * 2;
-      const slice = new THREE.Mesh(
-        new THREE.CylinderGeometry(
-          0.95,
-          0.95,
-          0.35,
-          6,
-          1,
-          false,
-          angle,
-          (Math.PI * 2) / 9
-        ),
-        sliceMat
-      );
-      this.pasarDisplayGroup.add(slice);
-    }
-    this.activeGroup.add(this.pasarDisplayGroup);
-
-    // Right: Rice Sacks & Honey Jars
-    const sack = new THREE.Mesh(
-      new THREE.BoxGeometry(1.1, 1.1, 0.85),
-      new THREE.MeshStandardMaterial({ color: 0xfef3c7, roughness: 0.8 })
-    );
-    sack.position.set(2.8, 2.35, 0.2);
-    this.activeGroup.add(sack);
-
-    // Player as Shopkeeper behind counter
-    this.playerPos.set(0, 0, -1.8);
-    this.playerRotY = 0;
-    if (this.playerAvatar) {
-      this.playerAvatar.position.copy(this.playerPos);
-      this.playerAvatar.rotation.y = 0;
-      this.activeGroup.add(this.playerAvatar);
-    }
-
-    // Customer NPC Queue to the right side of counter facing the stall
-    const buyerColors = [0x10b981, 0x3b82f6, 0xec4899];
-    buyerColors.forEach((hex, idx) => {
-      const buyer = createNPCWithMarker(
-        `Pembeli #${idx + 1}`,
-        hex,
-        this.maxAnisotropy
-      );
-      buyer.position.set(2.2 + idx * 2.1, 0, 2.8 + idx * 0.8);
-      buyer.lookAt(0, 1.2, 0);
-      this.activeGroup.add(buyer);
-    });
-  }
-
-  // =========================================================================
-  // 6. JEMBATAN JUARA (3D Island Glass Bridge with A/B/C/D Panels)
-  // =========================================================================
-  private buildJembatanJuara(biomeCfg: (typeof BIOMES)[0]): void {
-    this.bridgeStep = 0;
-    this.bridgePanels = [];
-
-    // Start Floating Island & Finish Trophy Island
-    const rockMat = new THREE.MeshStandardMaterial({
-      color: biomeCfg.groundColor,
-      roughness: 0.8
-    });
-    const startIsland = new THREE.Mesh(
-      new THREE.ConeGeometry(8.5, 6.5, 10),
-      rockMat
-    );
-    startIsland.rotation.x = Math.PI;
-    startIsland.position.set(0, -3.25, 6);
-    this.activeGroup.add(startIsland);
-
-    const endIsland = new THREE.Mesh(
-      new THREE.ConeGeometry(9.5, 7.5, 10),
-      rockMat
-    );
-    endIsland.rotation.x = Math.PI;
-    endIsland.position.set(0, -3.75, -42);
-    this.activeGroup.add(endIsland);
-
-    // Finish Archway
-    const archMat = new THREE.MeshStandardMaterial({
-      color: 0xfacc15,
-      metalness: 0.7,
-      roughness: 0.25
-    });
-    const finishBanner = new THREE.Mesh(
-      new THREE.BoxGeometry(9.5, 1.4, 0.5),
-      archMat
-    );
-    finishBanner.position.set(0, 4.5, -38);
-    this.activeGroup.add(finishBanner);
-
-    const letters = ['A', 'B', 'C', 'D'];
-    const panelX = [-4.8, -1.6, 1.6, 4.8];
-
-    for (let step = 0; step < 6; step++) {
-      const rowZ = -step * 6.2 - 2.5;
-      const rowPanels: THREE.Mesh[] = [];
-
-      for (let col = 0; col < 4; col++) {
-        const tex = createSignTexture(
-          `PANEL ${letters[col]}`,
-          `Langkah ${step + 1}`,
-          '#0c4a6e',
-          '#38bdf8',
-          this.maxAnisotropy
-        );
-        const panelMat = new THREE.MeshStandardMaterial({
-          map: tex,
-          transparent: true,
-          opacity: 0.82,
-          roughness: 0.15,
-          metalness: 0.3
-        });
-        const panel = new THREE.Mesh(
-          new THREE.BoxGeometry(2.6, 0.32, 3.8),
-          panelMat
-        );
-        panel.position.set(panelX[col], 0, rowZ);
-        panel.userData = {
-          interactType: 'bridge_panel',
-          stepIndex: step,
-          optionIndex: col
-        };
-        this.activeGroup.add(panel);
-        this.interactables.push(panel);
-        rowPanels.push(panel);
-      }
-      this.bridgePanels.push(rowPanels);
-    }
-
-    this.playerPos.set(0, 0, 4.2);
-    this.playerRotY = Math.PI;
-    if (this.playerAvatar) {
-      this.playerAvatar.position.copy(this.playerPos);
-      this.playerAvatar.rotation.y = Math.PI;
-      this.activeGroup.add(this.playerAvatar);
-    }
-  }
-
-  public resolveBridgeStepVisual(
-    stepIndex: number,
-    optionIndex: number,
-    isCorrect: boolean
-  ): void {
-    const row = this.bridgePanels[stepIndex];
-    if (!row || !row[optionIndex]) return;
-    const panel = row[optionIndex];
-    const mat = panel.material as THREE.MeshStandardMaterial;
-
-    const panelX = [-4.8, -1.6, 1.6, 4.8];
-
-    if (isCorrect) {
-      mat.color.setHex(0x10b981);
-      mat.opacity = 1.0;
-      this.bridgeStep = stepIndex + 1;
-      const targetZ =
-        this.bridgeStep >= 6 ? -39.0 : -stepIndex * 6.2 - 2.5;
-      this.playerPos.set(panelX[optionIndex], 0, targetZ);
-      this.playerVelY = 7.5;
-    } else {
-      mat.color.setHex(0xef4444);
-      mat.opacity = 0.25;
-      panel.position.y = -2.2;
-    }
-  }
-
-  // =========================================================================
-  // INPUT & RAYCASTING HANDLERS
-  // =========================================================================
-  private bindEvents(): void {
-    window.addEventListener('keydown', this.handleKeyDown);
-    window.addEventListener('keyup', this.handleKeyUp);
-    window.addEventListener('blur', this.handleBlur);
-    window.addEventListener('resize', this.handleResize);
-    this.renderer.domElement.addEventListener(
-      'pointerdown',
-      this.handlePointerDown
-    );
-    this.renderer.domElement.addEventListener(
-      'pointermove',
-      this.handlePointerMove
-    );
-  }
-
-  private handlePointerMove = (e: PointerEvent): void => {
-    if (this.isTitleTour || this.isPaused) return;
-    if (this.batch2Module instanceof BalapRoketGame) {
-      const rect = this.renderer.domElement.getBoundingClientRect();
-      if (rect.width === 0 || rect.height === 0) return;
-      const nx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-      const ny = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-      this.batch2Module.steerRocket(nx, ny);
-    }
-  };
-
-  private handleKeyDown = (e: KeyboardEvent): void => {
-    const code = e.code;
-    if (this.isTitleTour || this.isPaused) return;
-
-    if (
-      this.currentMode === 'lari_kilat' &&
-      !this.keysPressed.has(code)
-    ) {
-      if (code === 'KeyA' || code === 'ArrowLeft') {
-        this.shiftRunnerLane(-1);
-      } else if (code === 'KeyD' || code === 'ArrowRight') {
-        this.shiftRunnerLane(1);
-      } else if (code === 'Space' || code === 'ArrowUp' || code === 'KeyW') {
-        this.triggerJumpOrAction();
-      }
-    } else if (code === 'Space' && !this.keysPressed.has(code)) {
-      this.triggerJumpOrAction();
-    }
-
-    this.keysPressed.add(code);
-  };
-
-  private handleKeyUp = (e: KeyboardEvent): void => {
-    this.keysPressed.delete(e.code);
-  };
-
-  private handleBlur = (): void => {
-    this.keysPressed.clear();
-    this.joystickVec.x = 0;
-    this.joystickVec.y = 0;
-  };
-
-  private handleResize = (): void => {
-    if (!this.container) return;
-    const width = this.container.clientWidth || window.innerWidth;
-    const height = this.container.clientHeight || window.innerHeight;
-    this.camera.aspect = width / height;
-    this.camera.updateProjectionMatrix();
-    this.renderer.setSize(width, height);
-  };
-
-  private handlePointerDown = (e: PointerEvent): void => {
-    if (this.isTitleTour || this.isPaused) return;
-    const rect = this.renderer.domElement.getBoundingClientRect();
-    if (rect.width === 0 || rect.height === 0) return;
-
-    this.pointerNdc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-    this.pointerNdc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-
-    this.raycaster.setFromCamera(this.pointerNdc, this.camera);
-    const hits = this.raycaster.intersectObjects(this.interactables, true);
-    if (hits.length === 0) return;
-
-    let node: THREE.Object3D | null = hits[0].object;
-    while (node && !node.userData?.interactType) {
-      node = node.parent;
-    }
-    if (!node || !node.userData) return;
-
-    const { interactType } = node.userData;
-    if (interactType === 'building') {
-      this.callbacks.onOpenBuildingQuiz(
-        node.userData.subject,
-        node.userData.title
-      );
-    } else if (interactType === 'npc') {
-      this.callbacks.onOpenNpcDialog(
-        node.userData.npcName,
-        node.userData.subject
-      );
-    } else if (interactType === 'book') {
-      const bookEntry = this.books.find(
-        (b) => b.id === node!.userData.bookId
-      );
-      if (bookEntry && !bookEntry.collected) {
-        bookEntry.collected = true;
-        bookEntry.group.visible = false;
-        soundManager.playCoin();
-        this.callbacks.onCollectBook(bookEntry.id, bookEntry.subject);
-      }
-    } else if (interactType === 'tkp') {
-      this.callbacks.onInspectTkp(node.userData.tkpId);
-    } else if (interactType === 'bridge_panel') {
-      if (node.userData.stepIndex === this.bridgeStep) {
-        this.callbacks.onBridgeStepClick(node.userData.optionIndex);
-      }
-    } else if (
-      interactType === 'rocket_ring' ||
-      interactType === 'catapult_target' ||
-      interactType === 'batch3_option'
-    ) {
-      const idx =
-        node.userData.optionIndex ??
-        node.userData.ringIndex ??
-        node.userData.targetIndex ??
-        0;
-      this.callbacks.onBatch2OptionClick?.(idx);
-    }
-  };
-
-  // =========================================================================
-  // MAIN SIMULATION & RENDER LOOP (with Software-WebGL `afterDraw` Pacing)
-  // =========================================================================
-  private afterDraw(cb: () => void): void {
-    const gl = this.renderer.getContext() as WebGL2RenderingContext;
-    if (!gl || !gl.fenceSync) {
-      this.frameId = window.setTimeout(cb, 80);
-      return;
-    }
-    const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
-    gl.flush();
-    const poll = () => {
-      if (this.isDisposed) return;
-      const state = sync && gl.getSyncParameter(sync, gl.SYNC_STATUS);
-      if (state === gl.UNSIGNALED) {
-        this.frameId = window.setTimeout(poll, 5);
-      } else {
-        if (sync) gl.deleteSync(sync);
-        this.frameId = window.setTimeout(cb, 80);
-      }
-    };
-    this.frameId = window.setTimeout(poll, 5);
-  }
-
-  private startLoop(): void {
-    const tick = () => {
-      if (this.isDisposed) return;
-      const now = performance.now();
-      const rawDt = (now - this.lastTimestamp) / 1000;
-      this.lastTimestamp = now;
-      const dt = Math.min(rawDt, 0.05);
-
-      if (!this.isPaused) {
-        this.elapsed += dt;
-        this.updateSimulation(dt);
-      }
-
-      this.renderer.render(this.scene, this.camera);
-
-      if (this.isSoftwareGl) {
-        this.afterDraw(tick);
-      } else {
-        this.frameId = window.requestAnimationFrame(tick);
-      }
-    };
-
-    this.lastTimestamp = performance.now();
-    this.frameId = window.requestAnimationFrame(tick);
-  }
-
-  private updateSimulation(dt: number): void {
-    const dampFactor = 1 - Math.exp(-7.5 * dt);
-
-    // Title Screen Live Camera Spline Tour
-    if (this.isTitleTour) {
-      const orbitAngle = this.elapsed * 0.25;
-      this._camTargetPos.set(
-        Math.sin(orbitAngle) * 32,
-        14 + Math.sin(this.elapsed * 0.5) * 2,
-        Math.cos(orbitAngle) * 32
-      );
-      this.camera.position.lerp(this._camTargetPos, dampFactor);
-      this._camLookTarget.set(0, 2.5, 0);
-      this._currentLook.lerp(this._camLookTarget, dampFactor);
-      this.camera.lookAt(this._currentLook);
-      this.updateAmbientProps(dt);
-      return;
-    }
-
-    // Jump Gravity Physics
-    if (this.playerJumpY > 0 || this.playerVelY > 0) {
-      this.playerJumpY += this.playerVelY * dt;
-      this.playerVelY -= 24 * dt;
-      if (this.playerJumpY <= 0) {
-        this.playerJumpY = 0;
-        this.playerVelY = 0;
-      }
-    }
-
-    this.updateAmbientProps(dt);
-
-    if (
-      this.currentMode === 'jelajah_dunia' ||
-      this.currentMode === 'detektif_kota'
-    ) {
-      this.updateFreeRoamMovement(dt, dampFactor);
-    } else if (this.currentMode === 'lari_kilat') {
-      this.updateLariKilatSimulation(dt, dampFactor);
-    } else if (this.currentMode === 'jatuh_bangun') {
-      this.updateJatuhBangunSimulation(dt, dampFactor);
-    } else if (this.currentMode === 'pasar_nusantara') {
-      this.updatePasarNusantaraSimulation(dt, dampFactor);
-    } else if (this.currentMode === 'jembatan_juara') {
-      this.updateJembatanJuaraSimulation(dt, dampFactor);
-    } else if (this.batch2Module) {
-      this.batch2Module.update(dt);
-    } else if (this.batch3Module) {
-      let dx = this.joystickVec.x;
-      let dz = this.joystickVec.y;
-      if (this.keysPressed.has('KeyW') || this.keysPressed.has('ArrowUp'))
-        dz -= 1;
-      if (this.keysPressed.has('KeyS') || this.keysPressed.has('ArrowDown'))
-        dz += 1;
-      if (this.keysPressed.has('KeyA') || this.keysPressed.has('ArrowLeft'))
-        dx -= 1;
-      if (this.keysPressed.has('KeyD') || this.keysPressed.has('ArrowRight'))
-        dx += 1;
-
-      if (Math.hypot(dx, dz) > 0.05) {
-        if (this.batch3Module instanceof SelamSamudraGame) {
-          this.batch3Module.steerSubmarine(dx, dz, dt);
-        } else if (this.batch3Module instanceof ArenaBossGame) {
-          this.batch3Module.steerPlayerInArena(dx, dz, dt);
-        }
-      }
-      this.batch3Module.update(dt, this.elapsed);
-    }
-  }
-
-  private updateAmbientProps(dt: number): void {
-    if (this.fountainSpout) {
-      this.fountainSpout.position.y =
-        3.2 + Math.sin(this.elapsed * 4.5) * 0.18;
-    }
-
-    for (const v of this.vehicles) {
-      if (v.axis === 'x') {
-        v.mesh.position.x += v.speed * v.dir * dt;
-        if (v.mesh.position.x > 40) v.mesh.position.x = -40;
-      } else if (v.axis === 'z') {
-        v.mesh.position.z += v.speed * v.dir * dt;
-        if (v.mesh.position.z > 40) v.mesh.position.z = -40;
-      } else if (v.axis === 'circle') {
-        v.angle = (v.angle || 0) + v.speed * dt;
-        const r = v.radius || 32;
-        v.mesh.position.x = Math.cos(v.angle) * r;
-        v.mesh.position.z = Math.sin(v.angle) * r;
-        v.mesh.rotation.y = -v.angle;
-      }
-    }
-
-    for (const b of this.books) {
-      if (b.collected) continue;
-      const spin = b.group.getObjectByName('BookSpin');
-      if (spin) {
-        spin.rotation.y += dt * 1.8;
-        spin.position.y = 1.25 + Math.sin(this.elapsed * 3) * 0.15;
-      }
-      if (this.playerPos.distanceTo(b.group.position) < 2.2) {
-        b.collected = true;
-        b.group.visible = false;
-        soundManager.playCoin();
-        this.callbacks.onCollectBook(b.id, b.subject);
-      }
-    }
-  }
-
-  private updateFreeRoamMovement(dt: number, dampFactor: number): void {
-    let moveX = this.joystickVec.x;
-    let moveZ = this.joystickVec.y;
-
-    if (
-      this.keysPressed.has('KeyW') ||
-      this.keysPressed.has('ArrowUp')
-    )
-      moveZ -= 1;
-    if (
-      this.keysPressed.has('KeyS') ||
-      this.keysPressed.has('ArrowDown')
-    )
-      moveZ += 1;
-    if (
-      this.keysPressed.has('KeyA') ||
-      this.keysPressed.has('ArrowLeft')
-    )
-      moveX -= 1;
-    if (
-      this.keysPressed.has('KeyD') ||
-      this.keysPressed.has('ArrowRight')
-    )
-      moveX += 1;
-
-    const len = Math.hypot(moveX, moveZ);
-    const isMoving = len > 0.05;
-    if (isMoving) {
-      moveX /= len;
-      moveZ /= len;
-      const speed = 10.5;
-      this.playerPos.x = THREE.MathUtils.clamp(
-        this.playerPos.x + moveX * speed * dt,
-        -42,
-        42
-      );
-      this.playerPos.z = THREE.MathUtils.clamp(
-        this.playerPos.z + moveZ * speed * dt,
-        -42,
-        42
-      );
-      this.playerRotY = Math.atan2(moveX, moveZ);
-      this.walkDistance += speed * dt;
-    }
-
-    if (this.playerAvatar) {
-      this.playerAvatar.position.copy(this.playerPos);
-      this.playerAvatar.rotation.y = this.playerRotY;
-      updateAvatarAnimation(
-        this.playerAvatar,
-        this.walkDistance,
-        isMoving,
-        this.playerJumpY,
-        this.elapsed
-      );
-    }
-
-    this._camTargetPos.set(
-      this.playerPos.x,
-      this.playerPos.y + 10.5,
-      this.playerPos.z + 15.5
-    );
-    this.camera.position.lerp(this._camTargetPos, dampFactor);
-    this._camLookTarget.set(
-      this.playerPos.x,
-      this.playerPos.y + 1.8,
-      this.playerPos.z - 2.0
-    );
-    this._currentLook.lerp(this._camLookTarget, dampFactor);
-    this.camera.lookAt(this._currentLook);
-  }
-
-  private updateLariKilatSimulation(dt: number, dampFactor: number): void {
-    const speedMult = this.activePowerUp === 'lightning' ? 1.45 : 1.0;
-    const stepZ = this.runnerSpeed * speedMult * dt;
-    this.runnerDistance += stepZ;
-    this.walkDistance += stepZ * 0.7;
-
-    if (this.powerUpTimer > 0) {
-      this.powerUpTimer -= dt;
-      if (this.powerUpTimer <= 0) {
-        this.activePowerUp = null;
-      }
-    }
-
-    const targetX = getLaneX(this.runnerLane);
-    this.playerPos.x = THREE.MathUtils.lerp(
-      this.playerPos.x,
-      targetX,
-      1 - Math.exp(-14 * dt)
-    );
-
-    if (this.playerAvatar) {
-      this.playerAvatar.position.set(this.playerPos.x, 0, 0);
-      this.playerAvatar.rotation.y = Math.PI;
-      updateAvatarAnimation(
-        this.playerAvatar,
-        this.walkDistance,
-        true,
-        this.playerJumpY,
-        this.elapsed
-      );
-    }
-
-    // Update Giant Goose chaser behind player
-    if (this.gooseMesh) {
-      this.gooseMesh.position.x = THREE.MathUtils.lerp(
-        this.gooseMesh.position.x,
-        this.playerPos.x,
-        dampFactor
-      );
-      this.gooseMesh.position.z = this.gooseDistance;
-      const lw = this.gooseMesh.getObjectByName('LeftWing');
-      const rw = this.gooseMesh.getObjectByName('RightWing');
-      const flap = Math.sin(this.elapsed * 14) * 0.45;
-      if (lw) lw.rotation.z = flap;
-      if (rw) rw.rotation.z = -flap;
-    }
-
-    // Move obstacles & coins toward player (Z = 0)
-    for (const obs of this.runnerObstacles) {
-      obs.z += stepZ;
-      if (obs.type === 'coin' && this.activePowerUp === 'magnet' && obs.z > -18) {
-        obs.mesh.position.x = THREE.MathUtils.lerp(
-          obs.mesh.position.x,
-          this.playerPos.x,
-          0.2
-        );
-      } else {
-        obs.mesh.position.x = getLaneX(obs.lane);
-      }
-      obs.mesh.position.z = obs.z;
-      if (obs.type !== 'barrier') {
-        obs.mesh.rotation.y += dt * 3;
-      }
-
-      if (obs.active && Math.abs(obs.z) < 0.95) {
-        const dx = Math.abs(obs.mesh.position.x - this.playerPos.x);
-        if (dx < 1.15) {
-          if (obs.type === 'coin') {
-            obs.active = false;
-            obs.mesh.visible = false;
-            this.runnerCoins += 10;
-            soundManager.playCoin();
-          } else if (obs.type === 'barrier') {
-            if (this.playerJumpY < 0.85 && this.activePowerUp !== 'hoverboard') {
-              obs.active = false;
-              obs.mesh.visible = false;
-              this.runnerLives = Math.max(0, this.runnerLives - 1);
-              this.gooseDistance = Math.max(2.2, this.gooseDistance - 2.2);
-              soundManager.playWrong();
-              if (this.runnerLives <= 0) {
-                this.callbacks.onRunnerGameOver(
-                  Math.round(this.runnerDistance),
-                  this.runnerCoins
-                );
-                return;
-              }
-            }
-          } else {
-            // Power-up collected!
-            obs.active = false;
-            obs.mesh.visible = false;
-            this.activePowerUp = obs.type;
-            this.powerUpTimer = 7.0;
-            soundManager.playLevelUp();
-          }
-        }
-      }
-
-      if (obs.z > 10) {
-        obs.z = -140 - Math.random() * 15;
-        obs.lane = Math.floor(Math.random() * 4);
-        obs.active = true;
-        obs.mesh.visible = true;
-      }
-    }
-
-    // Move Answer Gate toward player
-    if (this.runnerGate) {
-      this.runnerGate.z += stepZ;
-      this.runnerGate.group.position.z = this.runnerGate.z;
-
-      if (!this.runnerGate.resolved && this.runnerGate.z >= -0.6) {
-        this.runnerGate.resolved = true;
-        const chosenLane = this.runnerLane;
-        const correctIdx = this.activeRunnerQuestion?.answerIndex ?? 0;
-        const isCorrect = chosenLane === correctIdx;
-
-        if (isCorrect) {
-          this.runnerCoins += 35;
-          this.gooseDistance = Math.min(9.5, this.gooseDistance + 1.5);
-          soundManager.playCorrect();
-        } else {
-          this.runnerLives = Math.max(0, this.runnerLives - 1);
-          this.gooseDistance = Math.max(2.0, this.gooseDistance - 2.2);
-          soundManager.playWrong();
-        }
-        this.callbacks.onRunnerGateHit(chosenLane, isCorrect);
-        if (this.runnerLives <= 0) {
-          this.callbacks.onRunnerGameOver(
-            Math.round(this.runnerDistance),
-            this.runnerCoins
-          );
-          return;
-        }
-      }
-    }
-
-    // Sync HUD at ~10Hz
-    if (this.elapsed - this.lastHudSync > 0.12) {
-      this.lastHudSync = this.elapsed;
-      this.callbacks.onRunnerStatsUpdate({
-        distance: Math.round(this.runnerDistance),
-        coins: this.runnerCoins,
-        lives: this.runnerLives,
-        gooseDistance: Number(this.gooseDistance.toFixed(1)),
-        activePowerUp: this.activePowerUp
-      });
-    }
-
-    this._camTargetPos.set(this.playerPos.x * 0.45, 6.2, 9.8);
-    this.camera.position.lerp(this._camTargetPos, dampFactor);
-    this._camLookTarget.set(this.playerPos.x * 0.3, 1.8, -12);
-    this._currentLook.lerp(this._camLookTarget, dampFactor);
-    this.camera.lookAt(this._currentLook);
-  }
-
-  private updateJatuhBangunSimulation(dt: number, dampFactor: number): void {
-    this.playerPos.y = THREE.MathUtils.lerp(
-      this.playerPos.y,
-      this.towerTargetY,
-      dampFactor
-    );
-    if (this.playerAvatar) {
-      this.playerAvatar.position.set(0, this.playerPos.y, 0);
-      updateAvatarAnimation(
-        this.playerAvatar,
-        this.walkDistance,
-        false,
-        this.playerJumpY,
-        this.elapsed
-      );
-    }
-    if (this.towerCrown) {
-      this.towerCrown.rotation.y += dt * 1.8;
-    }
-
-    this._camTargetPos.set(0, this.playerPos.y + 6.5, 13.5);
-    this.camera.position.lerp(this._camTargetPos, dampFactor);
-    this._camLookTarget.set(0, this.playerPos.y + 1.8, 0);
-    this._currentLook.lerp(this._camLookTarget, dampFactor);
-    this.camera.lookAt(this._currentLook);
-  }
-
-  private updatePasarNusantaraSimulation(dt: number, dampFactor: number): void {
-    if (this.pasarDisplayGroup) {
-      this.pasarDisplayGroup.rotation.y += dt * 0.6;
-    }
-    if (this.playerAvatar) {
-      updateAvatarAnimation(
-        this.playerAvatar,
-        0,
-        false,
-        this.playerJumpY,
-        this.elapsed
-      );
-    }
-    this._camTargetPos.set(-1.8, 4.1, 8.2);
-    this.camera.position.lerp(this._camTargetPos, dampFactor);
-    this._camLookTarget.set(0.4, 2.1, 0);
-    this._currentLook.lerp(this._camLookTarget, dampFactor);
-    this.camera.lookAt(this._currentLook);
-  }
-
-  private updateJembatanJuaraSimulation(dt: number, dampFactor: number): void {
-    if (this.playerAvatar) {
-      this.playerAvatar.position.lerp(this.playerPos, dampFactor);
-      updateAvatarAnimation(
-        this.playerAvatar,
-        this.walkDistance,
-        false,
-        this.playerJumpY,
-        this.elapsed
-      );
-    }
-
-    this._camTargetPos.set(
-      this.playerPos.x * 0.4,
-      this.playerPos.y + 8.5,
-      this.playerPos.z + 12.5
-    );
-    this.camera.position.lerp(this._camTargetPos, dampFactor);
-    this._camLookTarget.set(0, 0.8, this.playerPos.z - 6.5);
-    this._currentLook.lerp(this._camLookTarget, dampFactor);
-    this.camera.lookAt(this._currentLook);
   }
 
   public destroy(): void {
-    this.isDisposed = true;
-    window.cancelAnimationFrame(this.frameId);
-    window.clearTimeout(this.frameId);
+    if (this.rafId !== null) {
+      cancelAnimationFrame(this.rafId);
+    }
+    window.removeEventListener('resize', this.handleResize);
     window.removeEventListener('keydown', this.handleKeyDown);
     window.removeEventListener('keyup', this.handleKeyUp);
-    window.removeEventListener('blur', this.handleBlur);
-    window.removeEventListener('resize', this.handleResize);
-    this.renderer.domElement.removeEventListener(
-      'pointerdown',
-      this.handlePointerDown
+    this.canvas.removeEventListener('pointerdown', this.handlePointerDown);
+    soundManager.stopAmbient();
+  }
+
+  // ==========================================================================
+  // PARTICLE ENGINE 2D
+  // ==========================================================================
+
+  private spawnPixelBurst(
+    offsetX: number,
+    offsetY: number,
+    color: string,
+    count: number
+  ): void {
+    const cx = (this.canvas.clientWidth || 800) * 0.5 + offsetX;
+    const cy = (this.canvas.clientHeight || 600) * 0.52 + offsetY;
+    let spawned = 0;
+    for (const p of this.particles) {
+      if (!p.active) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 40 + Math.random() * 140;
+        p.active = true;
+        p.x = cx;
+        p.y = cy;
+        p.vx = Math.cos(angle) * speed;
+        p.vy = Math.sin(angle) * speed - 50;
+        p.size = 4 + Math.floor(Math.random() * 4);
+        p.color = color;
+        p.life = 0;
+        p.maxLife = 0.45 + Math.random() * 0.35;
+        p.gravity = 260;
+        spawned++;
+        if (spawned >= count) break;
+      }
+    }
+  }
+
+  // ==========================================================================
+  // MAIN GAME LOOP & UPDATE
+  // ==========================================================================
+
+  private loop = (now: number): void => {
+    const rawDt = Math.min(0.05, Math.max(0.001, (now - this.lastTime) / 1000));
+    this.lastTime = now;
+    const dt = this.juiceManager.update(rawDt);
+    this.elapsedTime += dt;
+
+    if (!this.isPaused) {
+      this.update(dt);
+    }
+    this.render();
+
+    this.rafId = requestAnimationFrame(this.loop);
+  };
+
+  private update(dt: number): void {
+    // Squash & stretch spring back to (1,1)
+    this.squashX += (1 - this.squashX) * Math.min(1, dt * 12);
+    this.squashY += (1 - this.squashY) * Math.min(1, dt * 12);
+
+    // Jump vertical physics
+    if (this.playerY > 0 || this.playerVy !== 0) {
+      this.playerY += this.playerVy * dt;
+      this.playerVy -= 24 * dt;
+      if (this.playerY <= 0) {
+        this.playerY = 0;
+        this.playerVy = 0;
+        this.squashX = 1.18;
+        this.squashY = 0.82;
+      }
+    }
+
+    // Input movement vector
+    let moveX = this.joystickVec.x;
+    let moveZ = this.joystickVec.y;
+    if (this.keys['KeyW'] || this.keys['ArrowUp']) moveZ -= 1;
+    if (this.keys['KeyS'] || this.keys['ArrowDown']) moveZ += 1;
+    if (this.keys['KeyA'] || this.keys['ArrowLeft']) moveX -= 1;
+    if (this.keys['KeyD'] || this.keys['ArrowRight']) moveX += 1;
+
+    const len = Math.hypot(moveX, moveZ);
+    if (len > 1) {
+      moveX /= len;
+      moveZ /= len;
+    }
+
+    if (this.isTitleTour) {
+      this.playerX = Math.sin(this.elapsedTime * 0.4) * 4;
+      this.playerZ = Math.cos(this.elapsedTime * 0.4) * 4;
+      this.walkPhase += dt * 1.4;
+    } else if (
+      (this.activeGame === 'jelajah_dunia' ||
+        this.activeGame === 'detektif_kota') &&
+      !this.wardrobeShowcaseActive
+    ) {
+      const speed = 7.5;
+      this.playerVx = moveX * speed;
+      this.playerVz = moveZ * speed;
+      this.playerX = Math.max(
+        -16,
+        Math.min(16, this.playerX + this.playerVx * dt)
+      );
+      this.playerZ = Math.max(
+        -16,
+        Math.min(16, this.playerZ + this.playerVz * dt)
+      );
+
+      if (len > 0.1) {
+        this.walkPhase += dt * 2.2;
+      }
+    }
+
+    // Update active particles
+    for (const p of this.particles) {
+      if (!p.active) continue;
+      p.life += dt;
+      if (p.life >= p.maxLife) {
+        p.active = false;
+        continue;
+      }
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.vy += p.gravity * dt;
+    }
+
+    // Update floating texts
+    for (let i = this.floatingTexts.length - 1; i >= 0; i--) {
+      const ft = this.floatingTexts[i];
+      ft.life += dt;
+      ft.y -= 42 * dt;
+      if (ft.life >= ft.maxLife) {
+        this.floatingTexts.splice(i, 1);
+      }
+    }
+
+    // Update mode-specific timers
+    if (this.activeGame === 'lari_kilat' && !this.isTitleTour) {
+      this.updateRunner(dt);
+    } else if (this.activeGame === 'pertahanan_kastil') {
+      this.castleMonsterProgress =
+        (this.castleMonsterProgress + dt * 0.18) % 1;
+      if (this.castleCannonFlash > 0) this.castleCannonFlash -= dt;
+    } else if (this.activeGame === 'balap_roket') {
+      if (this.rocketRingFlash > 0) this.rocketRingFlash -= dt;
+      this.rocketX += moveX * 140 * dt;
+      this.rocketY += moveZ * 110 * dt;
+      this.rocketX = Math.max(-160, Math.min(160, this.rocketX));
+      this.rocketY = Math.max(-80, Math.min(80, this.rocketY));
+    } else if (this.activeGame === 'panahan_katapel') {
+      if (this.catapultArcT > 0) {
+        this.catapultArcT += dt * 1.6;
+        if (this.catapultArcT >= 1) this.catapultArcT = 0;
+      }
+    } else if (this.activeGame === 'selam_samudra') {
+      if (this.subSonarPulse > 0) {
+        this.subSonarPulse = Math.max(0, this.subSonarPulse - dt * 0.8);
+      }
+    } else if (this.activeGame === 'koki_kimia') {
+      if (this.chemPourTimer > 0) {
+        this.chemPourTimer = Math.max(0, this.chemPourTimer - dt);
+      }
+    } else if (this.activeGame === 'penjaga_gawang') {
+      if (this.goalieBallT > 0) {
+        this.goalieBallT = Math.max(0, this.goalieBallT - dt * 1.4);
+      }
+    } else if (this.activeGame === 'tebak_bangun') {
+      if (this.prismLaserTimer > 0) {
+        this.prismLaserTimer = Math.max(0, this.prismLaserTimer - dt);
+      }
+    } else if (this.activeGame === 'arena_boss') {
+      if (this.bossHitFlash > 0) {
+        this.bossHitFlash = Math.max(0, this.bossHitFlash - dt);
+      }
+    }
+  }
+
+  private updateRunner(dt: number): void {
+    const dda = computeDynamicDifficulty(this.currentScore, this.currentStreak);
+    this.runnerSpeed = dda.runnerSpeed;
+    this.runnerDistance += this.runnerSpeed * dt;
+    this.runnerGateZ += this.runnerSpeed * dt;
+
+    if (this.runnerGateZ >= 4) {
+      const q = this.activeQuestion;
+      const isCorrect = this.runnerLane === q.answerIndex;
+      this.callbacks.onRunnerGateHit(this.runnerLane, isCorrect);
+      if (isCorrect) {
+        this.runnerCoins += 35;
+        this.runnerGooseDist = Math.min(15, this.runnerGooseDist + 2);
+      } else {
+        this.runnerLives = Math.max(0, this.runnerLives - 1);
+        this.runnerGooseDist = Math.max(0, this.runnerGooseDist - 4.5);
+        if (this.runnerGooseDist <= 0.5 || this.runnerLives <= 0) {
+          this.callbacks.onRunnerGameOver(
+            Math.floor(this.runnerDistance),
+            this.runnerCoins
+          );
+        }
+      }
+      this.runnerGateZ = -32;
+    }
+
+    this.callbacks.onRunnerStatsUpdate({
+      distance: Math.floor(this.runnerDistance),
+      coins: this.runnerCoins,
+      lives: this.runnerLives,
+      gooseDistance: Math.round(this.runnerGooseDist),
+      activePowerUp: this.runnerPowerup
+    });
+  }
+
+  // ==========================================================================
+  // MASTER 2.5D ISOMETRIC PIXEL-ART RENDERER
+  // ==========================================================================
+
+  private render(): void {
+    const ctx = this.ctx;
+    const width = this.canvas.clientWidth || 800;
+    const height = this.canvas.clientHeight || 600;
+    this.hotspots = [];
+
+    const palette =
+      BIOME_PIXEL_PALETTES[this.currentBiome] ||
+      BIOME_PIXEL_PALETTES.kota_ilmu;
+
+    // 1. Retro 16-Bit Sky Gradient
+    const grad = ctx.createLinearGradient(0, 0, 0, height);
+    grad.addColorStop(0, palette.skyTop);
+    grad.addColorStop(1, palette.skyBottom);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, width, height);
+
+    // 2. Retro Pixel Horizon Stars
+    this.drawPixelAtmosphereBackdrop(ctx, width, height, palette.accentHex);
+
+    ctx.save();
+    if (this.cameraZoom !== 1.0) {
+      ctx.translate(width * 0.5, height * 0.5);
+      ctx.scale(this.cameraZoom, this.cameraZoom);
+      ctx.translate(-width * 0.5, -height * 0.5);
+    }
+    if (this.wardrobeShowcaseActive) {
+      this.drawWardrobeShowcaseScene(ctx, width, height);
+    } else {
+      switch (this.activeGame) {
+        case 'jelajah_dunia':
+          this.renderOpenWorldIsoHub(ctx, width, height);
+          break;
+        case 'lari_kilat':
+          this.renderRunnerIso(ctx, width, height);
+          break;
+        case 'jatuh_bangun':
+          this.renderTowerSurvivalIso(ctx, width, height);
+          break;
+        case 'detektif_kota':
+          this.renderDetectiveIso(ctx, width, height);
+          break;
+        case 'pasar_nusantara':
+          this.renderPasarIso(ctx, width, height);
+          break;
+        case 'jembatan_juara':
+          this.renderBridgeIso(ctx, width, height);
+          break;
+        case 'pertahanan_kastil':
+          this.renderCastleDefenseIso(ctx, width, height);
+          break;
+        case 'balap_roket':
+          this.renderRocketFlightIso(ctx, width, height);
+          break;
+        case 'arsitek_menara':
+          this.renderArchitectIso(ctx, width, height);
+          break;
+        case 'labirin_minotaur':
+          this.renderMazeIso(ctx, width, height);
+          break;
+        case 'panahan_katapel':
+          this.renderCatapultIso(ctx, width, height);
+          break;
+        case 'sirkuit_logika':
+          this.renderRobotCoderIso(ctx, width, height);
+          break;
+        case 'selam_samudra':
+          this.renderSubmarineIso(ctx, width, height);
+          break;
+        case 'koki_kimia':
+          this.renderChemLabIso(ctx, width, height);
+          break;
+        case 'ekspedisi_pinisi':
+          this.renderPinisiVoyageIso(ctx, width, height);
+          break;
+        case 'penjaga_gawang':
+          this.renderGoalieIso(ctx, width, height);
+          break;
+        case 'pabrik_sortir':
+          this.renderConveyorIso(ctx, width, height);
+          break;
+        case 'tebak_bangun':
+          this.renderPrismLaserIso(ctx, width, height);
+          break;
+        case 'tarik_tambang':
+          this.renderTugOfWarIso(ctx, width, height);
+          break;
+        case 'arena_boss':
+          this.renderBossBattleIso(ctx, width, height);
+          break;
+      }
+    }
+    ctx.restore();
+
+    // 3. Render 16-Bit Pixel Burst Particles
+    for (const p of this.particles) {
+      if (!p.active) continue;
+      const alpha = Math.max(0, 1 - p.life / p.maxLife);
+      ctx.fillStyle = p.color;
+      ctx.globalAlpha = alpha;
+      ctx.fillRect(Math.round(p.x), Math.round(p.y), p.size, p.size);
+    }
+    ctx.globalAlpha = 1;
+
+    // 4. Render Floating Combat/Score Texts
+    for (const ft of this.floatingTexts) {
+      const alpha = Math.max(0, 1 - ft.life / ft.maxLife);
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.font = '900 18px "Plus Jakarta Sans", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#020617';
+      ctx.fillText(ft.text, ft.x + 2, ft.y + 2);
+      ctx.fillStyle = ft.color;
+      ctx.fillText(ft.text, ft.x, ft.y);
+      ctx.restore();
+    }
+  }
+
+  private drawPixelAtmosphereBackdrop(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number,
+    accentHex: string
+  ): void {
+    ctx.save();
+    for (let i = 0; i < 28; i++) {
+      const sx = (i * 137 + Math.floor(this.elapsedTime * 12)) % width;
+      const sy = (i * 73) % Math.floor(height * 0.45);
+      const pulse = Math.sin(this.elapsedTime * 3 + i) > 0 ? 3 : 2;
+      ctx.fillStyle = i % 3 === 0 ? accentHex : 'rgba(255,255,255,0.45)';
+      ctx.fillRect(sx, sy, pulse, pulse);
+    }
+    ctx.restore();
+  }
+
+  private drawWardrobeShowcaseScene(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number
+  ): void {
+    const cx = width * 0.32;
+    const cy = height * 0.62;
+
+    drawIsoBlock(
+      ctx,
+      cx,
+      cy + 24,
+      190,
+      96,
+      26,
+      '#27272a',
+      '#18181b',
+      '#09090b',
+      '#52525b'
     );
-    this.renderer.domElement.removeEventListener(
-      'pointermove',
-      this.handlePointerMove
+    drawIsoBlock(
+      ctx,
+      cx,
+      cy + 2,
+      140,
+      70,
+      14,
+      '#3f3f46',
+      '#27272a',
+      '#18181b',
+      '#a1a1aa'
     );
-    this.disposeScene();
-    this.renderer.dispose();
+
+    drawPixelStudentAvatar(
+      ctx,
+      cx,
+      cy - 14,
+      this.uniform,
+      this.accessories,
+      this.elapsedTime * 0.6,
+      true,
+      this.squashX,
+      this.squashY,
+      5.8,
+      this.feverActive,
+      this.getExtraLoadout()
+    );
+  }
+
+  // ==========================================================================
+  // #1 OPEN-WORLD HUB: JELAJAH DUNIA (ISOMETRIC 2.5D PIXEL CITY)
+  // ==========================================================================
+
+  private renderOpenWorldIsoHub(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number
+  ): void {
+    const palette = BIOME_PIXEL_PALETTES[this.currentBiome];
+    const playerIso = worldToIsoScreen(this.playerX, this.playerZ, 0, 0, 0);
+    const originX = width * 0.5 - playerIso.x * 0.65;
+    const originY = height * 0.54 - playerIso.y * 0.65;
+
+    // Draw Isometric Tile Checkerboard & Crossroad
+    for (let gx = -14; gx <= 14; gx += 2) {
+      for (let gz = -14; gz <= 14; gz += 2) {
+        const pt = worldToIsoScreen(gx, gz, 0, originX, originY);
+        if (
+          pt.x < -80 ||
+          pt.x > width + 80 ||
+          pt.y < -80 ||
+          pt.y > height + 80
+        ) {
+          continue;
+        }
+        const isRoad = Math.abs(gx) <= 2 || Math.abs(gz) <= 2;
+        const isAlt = ((gx + gz) / 2) % 2 === 0;
+        const topCol = isRoad
+          ? palette.roadTop
+          : isAlt
+          ? palette.tileTopA
+          : palette.tileTopB;
+        drawIsoBlock(
+          ctx,
+          pt.x,
+          pt.y,
+          128,
+          64,
+          6,
+          topCol,
+          palette.tileLeft,
+          palette.tileRight,
+          isRoad ? palette.roadBorder : 'rgba(2,6,23,0.4)'
+        );
+      }
+    }
+
+    const renderQueue: { depth: number; draw: () => void }[] = [];
+
+    // Central Isometric Fountain / Biome Monument
+    const fPt = worldToIsoScreen(0, 0, 0, originX, originY);
+    renderQueue.push({
+      depth: fPt.depth,
+      draw: () => {
+        drawIsoBlock(
+          ctx,
+          fPt.x,
+          fPt.y,
+          84,
+          42,
+          18,
+          palette.waterA,
+          '#0284c7',
+          '#0369a1',
+          palette.waterB
+        );
+        const jetH = 26 + Math.sin(this.elapsedTime * 5) * 6;
+        drawIsoBlock(
+          ctx,
+          fPt.x,
+          fPt.y - 18,
+          28,
+          14,
+          jetH,
+          '#e0f2fe',
+          '#38bdf8',
+          '#0284c7'
+        );
+      }
+    });
+
+    // 5 Subject Buildings
+    for (const b of ISO_BUILDINGS) {
+      const bPt = worldToIsoScreen(b.x, b.z, 0, originX, originY);
+      const dist = Math.hypot(this.playerX - b.x, this.playerZ - b.z);
+      const isNear = dist < 4.8;
+
+      this.hotspots.push({
+        id: b.id,
+        screenX: bPt.x,
+        screenY: bPt.y - b.h * 0.5,
+        radius: 56,
+        action: () => this.callbacks.onOpenBuildingQuiz(b.subject, b.title)
+      });
+
+      renderQueue.push({
+        depth: bPt.depth,
+        draw: () => {
+          drawIsoBlock(
+            ctx,
+            bPt.x,
+            bPt.y,
+            b.w,
+            b.d,
+            b.h,
+            b.topColor,
+            b.leftColor,
+            b.rightColor,
+            isNear ? '#22d3ee' : 'rgba(2,6,23,0.85)'
+          );
+          ctx.fillStyle = '#fef08a';
+          for (let wy = 24; wy < b.h - 16; wy += 22) {
+            ctx.fillRect(bPt.x - 24, bPt.y - wy, 8, 10);
+            ctx.fillRect(bPt.x + 12, bPt.y - wy, 8, 10);
+          }
+          drawPixelSignLabel(
+            ctx,
+            bPt.x,
+            bPt.y - b.h - 14,
+            b.title,
+            `[KLIK KUIS ${b.subject.toUpperCase()}]`,
+            b.accentColor,
+            isNear
+          );
+        }
+      });
+    }
+
+    // 4 Interactive NPCs
+    for (const npc of ISO_NPCS) {
+      const nPt = worldToIsoScreen(npc.x, npc.z, 0, originX, originY);
+      const dist = Math.hypot(this.playerX - npc.x, this.playerZ - npc.z);
+      const isNear = dist < 3.2;
+
+      this.hotspots.push({
+        id: npc.id,
+        screenX: nPt.x,
+        screenY: nPt.y - 28,
+        radius: 38,
+        action: () => this.callbacks.onOpenNpcDialog(npc.name, npc.subject)
+      });
+
+      renderQueue.push({
+        depth: nPt.depth,
+        draw: () => {
+          drawPixelStudentAvatar(
+            ctx,
+            nPt.x,
+            nPt.y,
+            'batik',
+            ['kacamata'],
+            this.elapsedTime * 0.4,
+            false,
+            1,
+            1,
+            2.8,
+            false
+          );
+          drawPixelSignLabel(
+            ctx,
+            nPt.x,
+            nPt.y - 64,
+            npc.name,
+            npc.role,
+            npc.shirtHex,
+            isNear
+          );
+        }
+      });
+    }
+
+    // Collectible Knowledge Books
+    for (const bk of this.books) {
+      if (bk.collected) continue;
+      const dist = Math.hypot(this.playerX - bk.x, this.playerZ - bk.z);
+      if (dist < 1.8 && !this.isTitleTour) {
+        bk.collected = true;
+        soundManager.playCoin();
+        this.callbacks.onCollectBook(bk.id, bk.subject);
+        continue;
+      }
+      const bkPt = worldToIsoScreen(
+        bk.x,
+        bk.z,
+        0.5 + Math.sin(this.elapsedTime * 4) * 0.25,
+        originX,
+        originY
+      );
+      this.hotspots.push({
+        id: bk.id,
+        screenX: bkPt.x,
+        screenY: bkPt.y - 12,
+        radius: 30,
+        action: () => {
+          bk.collected = true;
+          soundManager.playCoin();
+          this.callbacks.onCollectBook(bk.id, bk.subject);
+        }
+      });
+      renderQueue.push({
+        depth: bkPt.depth,
+        draw: () => {
+          drawIsoBlock(
+            ctx,
+            bkPt.x,
+            bkPt.y,
+            26,
+            14,
+            16,
+            '#fde047',
+            '#eab308',
+            '#ca8a04',
+            '#ffffff'
+          );
+          drawPixelSignLabel(
+            ctx,
+            bkPt.x,
+            bkPt.y - 26,
+            `BUKU ${bk.subject.toUpperCase()}`,
+            '+30 Koin',
+            '#facc15',
+            false
+          );
+        }
+      });
+    }
+
+    // Player Avatar
+    const pScreen = worldToIsoScreen(
+      this.playerX,
+      this.playerZ,
+      this.playerY,
+      originX,
+      originY
+    );
+    renderQueue.push({
+      depth: pScreen.depth + 0.1,
+      draw: () => {
+        drawPixelStudentAvatar(
+          ctx,
+          pScreen.x,
+          pScreen.y,
+          this.uniform,
+          this.accessories,
+          this.walkPhase,
+          Math.hypot(this.playerVx, this.playerVz) > 0.2 || this.isTitleTour,
+          this.squashX,
+          this.squashY,
+          3.4,
+          this.feverActive,
+          this.getExtraLoadout()
+        );
+      }
+    });
+
+    renderQueue.sort((a, b) => a.depth - b.depth);
+    for (const item of renderQueue) {
+      item.draw();
+    }
+  }
+
+  // ==========================================================================
+  // #2 LARI KILAT (ISOMETRIC 4-LANE RUNNER + GIANT GOOSE MODEL)
+  // ==========================================================================
+
+  private renderRunnerIso(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number
+  ): void {
+    const cx = width * 0.5;
+    const cy = height * 0.62;
+
+    const laneColors = ['#0284c7', '#0369a1', '#0284c7', '#0369a1'];
+    for (let l = 0; l < 4; l++) {
+      const lx = cx + (l - 1.5) * 92;
+      drawIsoBlock(
+        ctx,
+        lx,
+        cy + 40,
+        84,
+        320,
+        14,
+        laneColors[l],
+        '#0f172a',
+        '#1e293b',
+        '#38bdf8'
+      );
+
+      const gateProgress = (this.runnerGateZ + 32) / 36;
+      const gy = cy - 150 + gateProgress * 170;
+      const labels = ['1/A', '2/B', '3/C', '4/D'];
+      const gateColors = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b'];
+
+      drawIsoBlock(
+        ctx,
+        lx,
+        gy,
+        68,
+        24,
+        48,
+        gateColors[l],
+        '#1e293b',
+        '#0f172a',
+        '#ffffff'
+      );
+      drawCanvasTargetReticle(
+        ctx,
+        lx,
+        gy - 22,
+        labels[l],
+        gateColors[l],
+        this.elapsedTime,
+        this.runnerLane === l
+      );
+
+      this.hotspots.push({
+        id: `lane_${l}`,
+        screenX: lx,
+        screenY: cy,
+        radius: 48,
+        action: () => {
+          this.runnerLane = l;
+        }
+      });
+    }
+
+    const playerLaneX = cx + (this.runnerLane - 1.5) * 92;
+    drawPixelStudentAvatar(
+      ctx,
+      playerLaneX,
+      cy + 20 - this.playerY * 14,
+      this.uniform,
+      this.accessories,
+      this.elapsedTime * 3.5,
+      true,
+      this.squashX,
+      this.squashY,
+      3.5,
+      this.feverActive,
+      this.getExtraLoadout()
+    );
+
+    // Chasing Giant Goose Model behind player
+    drawDetailedObject2D(
+      ctx,
+      'goose',
+      playerLaneX,
+      cy + 105,
+      '#ffffff',
+      this.elapsedTime,
+      1.15
+    );
+  }
+
+  // ==========================================================================
+  // #3 JATUH BANGUN (ISOMETRIC HEXAGONAL 4-FLOOR TOWER)
+  // ==========================================================================
+
+  private renderTowerSurvivalIso(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number
+  ): void {
+    const cx = width * 0.5;
+    const baseY = height * 0.78;
+    const floorColors = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#eab308'];
+
+    for (let f = 0; f <= 4; f++) {
+      const fy = baseY - f * 68;
+      const isCurrent = f === this.towerFloor;
+      drawIsoBlock(
+        ctx,
+        cx,
+        fy,
+        240 - f * 18,
+        110 - f * 8,
+        24,
+        floorColors[f],
+        '#1e293b',
+        '#0f172a',
+        isCurrent ? '#22d3ee' : '#ffffff'
+      );
+      drawPixelSignLabel(
+        ctx,
+        cx - 140,
+        fy - 10,
+        f === 4 ? 'PUNCAK MAHKOTA' : `LANTAI ${f + 1}`,
+        isCurrent ? 'POSISI KAMU' : '',
+        floorColors[f],
+        isCurrent
+      );
+    }
+
+    const avatarY = baseY - this.towerFloor * 68 - 26;
+    drawPixelStudentAvatar(
+      ctx,
+      cx,
+      avatarY,
+      this.uniform,
+      this.accessories,
+      this.elapsedTime,
+      false,
+      this.squashX,
+      this.squashY,
+      3.4,
+      this.feverActive,
+      this.getExtraLoadout()
+    );
+  }
+
+  // ==========================================================================
+  // #4 DETEKTIF KOTA ILMU (ISOMETRIC 4-TKP INVESTIGATION)
+  // ==========================================================================
+
+  private renderDetectiveIso(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number
+  ): void {
+    const cx = width * 0.5;
+    const cy = height * 0.56;
+    const tkpCoords = [
+      { id: 1, x: -170, y: -60 },
+      { id: 2, x: 170, y: -60 },
+      { id: 3, x: -170, y: 75 },
+      { id: 4, x: 170, y: 75 }
+    ];
+
+    drawIsoBlock(
+      ctx,
+      cx,
+      cy + 40,
+      520,
+      260,
+      16,
+      '#1e293b',
+      '#0f172a',
+      '#020617',
+      '#8b5cf6'
+    );
+
+    for (const tkp of tkpCoords) {
+      const unlocked = this.unlockedTkps.includes(tkp.id);
+      const tx = cx + tkp.x;
+      const ty = cy + tkp.y;
+      const tkpInfo = this.detectiveCase.tkpList.find((t) => t.id === tkp.id);
+
+      drawIsoBlock(
+        ctx,
+        tx,
+        ty,
+        110,
+        56,
+        28,
+        unlocked ? '#10b981' : '#f59e0b',
+        '#1e293b',
+        '#0f172a',
+        '#ffffff'
+      );
+      // Draw Witness Person at each TKP
+      drawPixelStudentAvatar(
+        ctx,
+        tx,
+        ty - 26,
+        tkp.id % 2 === 0 ? 'sma' : 'batik',
+        ['kacamata'],
+        this.elapsedTime * 0.5,
+        false,
+        1,
+        1,
+        2.5,
+        false
+      );
+      drawCanvasTargetReticle(
+        ctx,
+        tx,
+        ty - 46,
+        `TKP ${tkp.id}`,
+        unlocked ? '#10b981' : '#f59e0b',
+        this.elapsedTime,
+        !unlocked
+      );
+      drawPixelSignLabel(
+        ctx,
+        tx,
+        ty - 95,
+        tkpInfo?.witness || `Saksi #${tkp.id}`,
+        unlocked ? '✓ Bukti' : 'Klik Periksa',
+        unlocked ? '#10b981' : '#f59e0b',
+        !unlocked
+      );
+
+      this.hotspots.push({
+        id: `tkp_${tkp.id}`,
+        screenX: tx,
+        screenY: ty - 20,
+        radius: 56,
+        action: () => this.callbacks.onInspectTkp(tkp.id)
+      });
+    }
+
+    drawPixelStudentAvatar(
+      ctx,
+      cx,
+      cy + 10,
+      this.uniform,
+      this.accessories,
+      this.elapsedTime,
+      false,
+      1,
+      1,
+      3.5,
+      this.feverActive,
+      this.getExtraLoadout()
+    );
+  }
+
+  // ==========================================================================
+  // #5 PASAR NUSANTARA (ISOMETRIC PIXEL STALL & SCALE)
+  // ==========================================================================
+
+  private renderPasarIso(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number
+  ): void {
+    const cx = width * 0.5;
+    const cy = height * 0.62;
+    const order = PASAR_CHALLENGES[this.pasarIndex] || PASAR_CHALLENGES[0];
+
+    drawIsoBlock(
+      ctx,
+      cx,
+      cy + 25,
+      340,
+      160,
+      46,
+      '#d97706',
+      '#b45309',
+      '#78350f',
+      '#fde047'
+    );
+
+    // Visual Goods & Scales on the market table
+    drawDetailedObject2D(ctx, 'parcel', cx - 18, cy - 28, '#f59e0b', this.elapsedTime, 0.85);
+    drawDetailedObject2D(ctx, 'flask', cx + 22, cy - 28, '#10b981', this.elapsedTime, 0.7);
+
+    drawPixelStudentAvatar(
+      ctx,
+      cx - 85,
+      cy - 24,
+      this.uniform,
+      this.accessories,
+      this.elapsedTime,
+      false,
+      1,
+      1,
+      3.6,
+      this.feverActive,
+      this.getExtraLoadout()
+    );
+    drawPixelStudentAvatar(
+      ctx,
+      cx + 85,
+      cy - 16,
+      'batik',
+      ['blangkon'],
+      this.elapsedTime * 0.6,
+      false,
+      1,
+      1,
+      3.4,
+      false
+    );
+
+    drawPixelSignLabel(
+      ctx,
+      cx + 85,
+      cy - 92,
+      order.customerName,
+      order.visualDetail,
+      '#10b981',
+      true
+    );
+  }
+
+  // ==========================================================================
+  // #6 JEMBATAN JUARA (ISOMETRIC 6-STEP GLASS BRIDGE)
+  // ==========================================================================
+
+  private renderBridgeIso(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number
+  ): void {
+    const cx = width * 0.5;
+    const startY = height * 0.78;
+    const labels = ['1/A', '2/B', '3/C', '4/D'];
+
+    for (let s = 0; s < 6; s++) {
+      const sy = startY - s * 46;
+      const isDone = s < this.bridgeStep;
+      const isCurrent = s === this.bridgeStep;
+      for (let col = 0; col < 4; col++) {
+        const px = cx + (col - 1.5) * 86;
+        drawIsoBlock(
+          ctx,
+          px,
+          sy,
+          68,
+          32,
+          10,
+          isDone ? '#10b981' : isCurrent ? '#38bdf8' : '#1e293b',
+          '#0284c7',
+          '#0369a1',
+          isCurrent ? '#fde047' : '#38bdf8'
+        );
+        if (isCurrent) {
+          drawCanvasTargetReticle(
+            ctx,
+            px,
+            sy - 6,
+            labels[col],
+            '#38bdf8',
+            this.elapsedTime,
+            true
+          );
+          this.hotspots.push({
+            id: `bridge_${col}`,
+            screenX: px,
+            screenY: sy,
+            radius: 38,
+            action: () => this.callbacks.onBridgeStepClick(col)
+          });
+        }
+      }
+    }
+
+    const playerY = startY - Math.min(5, this.bridgeStep) * 46 - 14;
+    drawPixelStudentAvatar(
+      ctx,
+      cx,
+      playerY,
+      this.uniform,
+      this.accessories,
+      this.elapsedTime,
+      false,
+      this.squashX,
+      this.squashY,
+      3.2,
+      this.feverActive,
+      this.getExtraLoadout()
+    );
+  }
+
+  // ==========================================================================
+  // #7 PERTAHANAN KASTIL (CASTLE, CANNON MODEL & HORNED MONSTER MODEL)
+  // ==========================================================================
+
+  private renderCastleDefenseIso(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number
+  ): void {
+    const cx = width * 0.5;
+    const cy = height * 0.62;
+
+    drawIsoBlock(
+      ctx,
+      cx - 180,
+      cy + 10,
+      130,
+      70,
+      95,
+      '#475569',
+      '#334155',
+      '#1e293b',
+      '#94a3b8'
+    );
+    drawPixelStudentAvatar(
+      ctx,
+      cx - 195,
+      cy - 86,
+      this.uniform,
+      this.accessories,
+      this.elapsedTime,
+      false,
+      1,
+      1,
+      3,
+      this.feverActive,
+      this.getExtraLoadout()
+    );
+    // Detailed Cannon Model on Castle Wall
+    drawDetailedObject2D(ctx, 'cannon', cx - 145, cy - 82, '#38bdf8', this.elapsedTime, 1);
+
+    const mx = cx + 190 - this.castleMonsterProgress * 280;
+    drawDetailedObject2D(ctx, 'monster', mx, cy - 5, '#ef4444', this.elapsedTime, 1.25);
+    drawCanvasTargetReticle(ctx, mx, cy - 35, 'TARGET', '#ef4444', this.elapsedTime, true);
+
+    if (this.castleCannonFlash > 0) {
+      ctx.strokeStyle = '#fde047';
+      ctx.lineWidth = 6;
+      ctx.beginPath();
+      ctx.moveTo(cx - 125, cy - 88);
+      ctx.lineTo(mx, cy - 20);
+      ctx.stroke();
+    }
+  }
+
+  // ==========================================================================
+  // #8 BALAP ROKET GALAKSI (SPACE ROCKET MODEL & 4 RING TARGETS)
+  // ==========================================================================
+
+  private renderRocketFlightIso(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number
+  ): void {
+    const cx = width * 0.5;
+    const cy = height * 0.56;
+    const quadrants = [
+      { label: '1/A', x: -155, y: -55, col: '#ef4444' },
+      { label: '2/B', x: 155, y: -55, col: '#3b82f6' },
+      { label: '3/C', x: -155, y: 55, col: '#10b981' },
+      { label: '4/D', x: 155, y: 55, col: '#f59e0b' }
+    ];
+
+    quadrants.forEach((q, idx) => {
+      drawCanvasTargetReticle(
+        ctx,
+        cx + q.x,
+        cy + q.y,
+        q.label,
+        q.col,
+        this.elapsedTime,
+        true
+      );
+      this.hotspots.push({
+        id: `ring_${idx}`,
+        screenX: cx + q.x,
+        screenY: cy + q.y,
+        radius: 46,
+        action: () => this.callbacks.onBatch2OptionClick?.(idx)
+      });
+    });
+
+    const rx = cx + this.rocketX;
+    const ry = cy + this.rocketY;
+    drawDetailedObject2D(ctx, 'rocket', rx, ry, '#38bdf8', this.elapsedTime, 1.2);
+  }
+
+  // ==========================================================================
+  // #9 ARSITEK MENARA (ISOMETRIC BLOCK STACKER + BUILDER AVATAR)
+  // ==========================================================================
+
+  private renderArchitectIso(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number
+  ): void {
+    const cx = width * 0.5;
+    const baseY = height * 0.78;
+    const blockCols = [
+      '#0284c7',
+      '#10b981',
+      '#f59e0b',
+      '#ec4899',
+      '#8b5cf6',
+      '#eab308'
+    ];
+
+    for (let i = 0; i < this.architectFloors; i++) {
+      const by = baseY - i * 34;
+      const offset = Math.sin(this.architectTilt * (i + 1)) * 14;
+      drawIsoBlock(
+        ctx,
+        cx + offset,
+        by,
+        140 - i * 6,
+        70 - i * 3,
+        30,
+        blockCols[i % blockCols.length],
+        '#1e293b',
+        '#0f172a',
+        '#ffffff'
+      );
+    }
+
+    drawPixelStudentAvatar(
+      ctx,
+      cx - 125,
+      baseY,
+      this.uniform,
+      this.accessories,
+      this.elapsedTime,
+      false,
+      1,
+      1,
+      3.4,
+      this.feverActive,
+      this.getExtraLoadout()
+    );
+  }
+
+  // ==========================================================================
+  // #10 LABIRIN MINOTAUR (ISOMETRIC DUNGEON GATES)
+  // ==========================================================================
+
+  private renderMazeIso(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number
+  ): void {
+    const cx = width * 0.5;
+    const cy = height * 0.62;
+    drawIsoBlock(
+      ctx,
+      cx,
+      cy + 20,
+      420,
+      210,
+      18,
+      '#3f2e21',
+      '#291d14',
+      '#1c130d',
+      '#10b981'
+    );
+
+    const gates = ['1/A', '2/B', '3/C', '4/D'];
+    gates.forEach((g, idx) => {
+      const gx = cx + (idx - 1.5) * 95;
+      drawIsoBlock(
+        ctx,
+        gx,
+        cy - 25,
+        66,
+        34,
+        58,
+        '#10b981',
+        '#047857',
+        '#064e3b',
+        '#fde047'
+      );
+      drawCanvasTargetReticle(
+        ctx,
+        gx,
+        cy - 54,
+        g,
+        '#10b981',
+        this.elapsedTime,
+        true
+      );
+    });
+
+    drawPixelStudentAvatar(
+      ctx,
+      cx,
+      cy + 15,
+      this.uniform,
+      this.accessories,
+      this.elapsedTime,
+      false,
+      1,
+      1,
+      3.4,
+      this.feverActive,
+      this.getExtraLoadout()
+    );
+  }
+
+  // ==========================================================================
+  // #11 PANAHAN KATAPEL FISIKA (SIEGE CATAPULT MODEL & PARABOLIC TARGETS)
+  // ==========================================================================
+
+  private renderCatapultIso(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number
+  ): void {
+    const cx = width * 0.5;
+    const cy = height * 0.64;
+
+    drawDetailedObject2D(
+      ctx,
+      'catapult',
+      cx - 180,
+      cy + 6,
+      '#d97706',
+      this.elapsedTime,
+      1.3
+    );
+    drawPixelStudentAvatar(
+      ctx,
+      cx - 230,
+      cy + 16,
+      this.uniform,
+      this.accessories,
+      this.elapsedTime,
+      false,
+      1,
+      1,
+      3.1,
+      this.feverActive,
+      this.getExtraLoadout()
+    );
+
+    const cols = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b'];
+    const labels = ['1/A', '2/B', '3/C', '4/D'];
+    for (let i = 0; i < 4; i++) {
+      const tx = cx + 40 + i * 58;
+      const ty = cy - 10 + (i % 2) * 28;
+      drawIsoBlock(
+        ctx,
+        tx,
+        ty,
+        48,
+        24,
+        42,
+        cols[i],
+        '#1e293b',
+        '#0f172a',
+        '#ffffff'
+      );
+      drawCanvasTargetReticle(
+        ctx,
+        tx,
+        ty - 24,
+        labels[i],
+        cols[i],
+        this.elapsedTime,
+        this.catapultTargetIdx === i
+      );
+      this.hotspots.push({
+        id: `catapult_${i}`,
+        screenX: tx,
+        screenY: ty,
+        radius: 36,
+        action: () => this.callbacks.onBatch2OptionClick?.(i)
+      });
+    }
+
+    if (this.catapultArcT > 0) {
+      const tx = cx + 40 + this.catapultTargetIdx * 58;
+      const bx = cx - 180 + (tx - (cx - 180)) * this.catapultArcT;
+      const by = cy - Math.sin(this.catapultArcT * Math.PI) * 140;
+      ctx.fillStyle = '#fde047';
+      ctx.beginPath();
+      ctx.arc(bx, by, 10, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // ==========================================================================
+  // #12 SIRKUIT LOGIKA (6x6 ISOMETRIC ROBOT CODER MODEL)
+  // ==========================================================================
+
+  private renderRobotCoderIso(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number
+  ): void {
+    const originX = width * 0.5;
+    const originY = height * 0.45;
+    const cornerCoords = [
+      { c: 0, r: 0, label: '1/A' },
+      { c: 5, r: 0, label: '2/B' },
+      { c: 0, r: 5, label: '3/C' },
+      { c: 5, r: 5, label: '4/D' }
+    ];
+
+    for (let r = 0; r < 6; r++) {
+      for (let c = 0; c < 6; c++) {
+        const pt = worldToIsoScreen(
+          (c - 2.5) * 1.4,
+          (r - 2.5) * 1.4,
+          0,
+          originX,
+          originY
+        );
+        const isCorner = (c === 0 || c === 5) && (r === 0 || r === 5);
+        drawIsoBlock(
+          ctx,
+          pt.x,
+          pt.y,
+          54,
+          27,
+          10,
+          isCorner ? '#10b981' : (c + r) % 2 === 0 ? '#334155' : '#1e293b',
+          '#0f172a',
+          '#020617',
+          isCorner ? '#fde047' : '#475569'
+        );
+      }
+    }
+
+    cornerCoords.forEach((cc, idx) => {
+      const pt = worldToIsoScreen(
+        (cc.c - 2.5) * 1.4,
+        (cc.r - 2.5) * 1.4,
+        0.2,
+        originX,
+        originY
+      );
+      drawCanvasTargetReticle(ctx, pt.x, pt.y - 8, cc.label, '#10b981', this.elapsedTime, false);
+      this.hotspots.push({
+        id: `robot_station_${idx}`,
+        screenX: pt.x,
+        screenY: pt.y,
+        radius: 36,
+        action: () => this.callbacks.onBatch2OptionClick?.(idx)
+      });
+    });
+
+    const rPt = worldToIsoScreen(
+      (this.robotCol - 2.5) * 1.4,
+      (this.robotRow - 2.5) * 1.4,
+      0.3,
+      originX,
+      originY
+    );
+    drawDetailedObject2D(ctx, 'robot', rPt.x, rPt.y - 6, '#38bdf8', this.elapsedTime, 1.15);
+  }
+
+  // ==========================================================================
+  // #13 SELAM SAMUDRA (SUBMARINE MODEL & 4 TREASURE CHEST MODELS)
+  // ==========================================================================
+
+  private renderSubmarineIso(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number
+  ): void {
+    const cx = width * 0.5;
+    const cy = height * 0.56;
+    const chests = [
+      { label: '1/A', x: -160, y: -40 },
+      { label: '2/B', x: 160, y: -40 },
+      { label: '3/C', x: -160, y: 65 },
+      { label: '4/D', x: 160, y: 65 }
+    ];
+
+    drawDetailedObject2D(
+      ctx,
+      'submarine',
+      cx,
+      cy - 10 + Math.sin(this.elapsedTime * 3) * 8,
+      '#facc15',
+      this.elapsedTime,
+      1.25
+    );
+
+    if (this.subSonarPulse > 0) {
+      ctx.strokeStyle = '#22d3ee';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(cx, cy, (1 - this.subSonarPulse) * 240, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    chests.forEach((ch, idx) => {
+      drawDetailedObject2D(
+        ctx,
+        'chest',
+        cx + ch.x,
+        cy + ch.y,
+        '#d97706',
+        this.elapsedTime,
+        1.15
+      );
+      drawCanvasTargetReticle(
+        ctx,
+        cx + ch.x,
+        cy + ch.y - 10,
+        ch.label,
+        '#06b6d4',
+        this.elapsedTime,
+        this.subTargetChest === idx
+      );
+      this.hotspots.push({
+        id: `chest_${idx}`,
+        screenX: cx + ch.x,
+        screenY: cy + ch.y,
+        radius: 44,
+        action: () => this.callbacks.onBatch2OptionClick?.(idx)
+      });
+    });
+  }
+
+  // ==========================================================================
+  // #14 KOKI KIMIA (CHEMIST AVATAR & 4 GLASS ERLENMEYER FLASKS)
+  // ==========================================================================
+
+  private renderChemLabIso(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number
+  ): void {
+    const cx = width * 0.5;
+    const cy = height * 0.64;
+    const labels = ['1/A', '2/B', '3/C', '4/D'];
+
+    drawIsoBlock(
+      ctx,
+      cx,
+      cy + 24,
+      380,
+      160,
+      36,
+      '#334155',
+      '#1e293b',
+      '#0f172a',
+      '#38bdf8'
+    );
+
+    drawPixelStudentAvatar(
+      ctx,
+      cx,
+      cy - 18,
+      this.uniform,
+      this.accessories,
+      this.elapsedTime,
+      false,
+      1,
+      1,
+      3.5,
+      this.feverActive,
+      this.getExtraLoadout()
+    );
+
+    CHEM_TUBE_SPECS.forEach((tube, idx) => {
+      const tx = cx + (idx - 1.5) * 86;
+      const lift =
+        this.chemPourTube === idx && this.chemPourTimer > 0 ? -28 : 0;
+      drawDetailedObject2D(
+        ctx,
+        'flask',
+        tx,
+        cy - 14 + lift,
+        tube.cssHex,
+        this.elapsedTime,
+        1.15
+      );
+      drawCanvasTargetReticle(
+        ctx,
+        tx,
+        cy - 34 + lift,
+        labels[idx],
+        tube.cssHex,
+        this.elapsedTime,
+        this.chemPourTube === idx
+      );
+      this.hotspots.push({
+        id: `tube_${idx}`,
+        screenX: tx,
+        screenY: cy - 18,
+        radius: 42,
+        action: () => this.callbacks.onBatch2OptionClick?.(idx)
+      });
+    });
+  }
+
+  // ==========================================================================
+  // #15 EKSPEDISI PINISI (PINISI SAILING SHIP MODEL & 4 ISLAND DOCKS)
+  // ==========================================================================
+
+  private renderPinisiVoyageIso(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number
+  ): void {
+    const cx = width * 0.5;
+    const cy = height * 0.56;
+    const labels = ['1/A', '2/B', '3/C', '4/D'];
+
+    PINISI_ISLAND_COORDS.forEach((isl, idx) => {
+      const ix = cx + (idx % 2 === 0 ? -175 : 175);
+      const iy = cy + (idx < 2 ? -55 : 65);
+      drawIsoBlock(
+        ctx,
+        ix,
+        iy,
+        96,
+        48,
+        24,
+        '#10b981',
+        '#047857',
+        '#d97706',
+        '#fde047'
+      );
+      drawCanvasTargetReticle(
+        ctx,
+        ix,
+        iy - 16,
+        labels[idx],
+        '#10b981',
+        this.elapsedTime,
+        true
+      );
+      drawPixelSignLabel(
+        ctx,
+        ix,
+        iy - 64,
+        isl.name.split(' (')[0],
+        '',
+        '#10b981',
+        false
+      );
+      this.hotspots.push({
+        id: `island_${idx}`,
+        screenX: ix,
+        screenY: iy,
+        radius: 48,
+        action: () => this.callbacks.onBatch2OptionClick?.(idx)
+      });
+    });
+
+    const sx = cx + this.pinisiShipX * 5;
+    const sy = cy + this.pinisiShipZ * 3 + Math.sin(this.elapsedTime * 3) * 5;
+    drawDetailedObject2D(ctx, 'pinisi', sx, sy, '#f59e0b', this.elapsedTime, 1.3);
+  }
+
+  // ==========================================================================
+  // #16 PENJAGA GAWANG PINTAR (STADIUM GOALFRAME, KEEPER & SOCCER BALL)
+  // ==========================================================================
+
+  private renderGoalieIso(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number
+  ): void {
+    const cx = width * 0.5;
+    const cy = height * 0.58;
+    const labels = ['1/A', '2/B', '3/C', '4/D'];
+
+    drawIsoBlock(
+      ctx,
+      cx,
+      cy + 30,
+      440,
+      200,
+      14,
+      '#15803d',
+      '#166534',
+      '#14532d',
+      '#ffffff'
+    );
+
+    // Goalpost Frame
+    ctx.strokeStyle = '#fafafa';
+    ctx.lineWidth = 5;
+    ctx.strokeRect(cx - 150, cy - 95, 300, 95);
+
+    GOALIE_ZONE_SPECS.forEach((z, idx) => {
+      const zx = cx + (idx % 2 === 0 ? -115 : 115);
+      const zy = cy + (idx < 2 ? -68 : -10);
+      drawCanvasTargetReticle(
+        ctx,
+        zx,
+        zy,
+        labels[idx],
+        z.cssHex,
+        this.elapsedTime,
+        this.goalieDiveZone === idx
+      );
+      this.hotspots.push({
+        id: `goalie_${idx}`,
+        screenX: zx,
+        screenY: zy,
+        radius: 44,
+        action: () => this.callbacks.onBatch2OptionClick?.(idx)
+      });
+    });
+
+    const diveX =
+      this.goalieDiveZone >= 0
+        ? cx + (this.goalieDiveZone % 2 === 0 ? -90 : 90)
+        : cx;
+    drawPixelStudentAvatar(
+      ctx,
+      diveX,
+      cy + 6,
+      this.uniform,
+      this.accessories,
+      this.elapsedTime,
+      false,
+      1,
+      1,
+      3.6,
+      this.feverActive,
+      this.getExtraLoadout()
+    );
+    drawDetailedObject2D(ctx, 'soccer_ball', diveX, cy + 32, '#ffffff', this.elapsedTime, 1.1);
+  }
+
+  // ==========================================================================
+  // #17 PABRIK SORTIR (CONVEYOR PARCELS & 4 CHUTES)
+  // ==========================================================================
+
+  private renderConveyorIso(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number
+  ): void {
+    const cx = width * 0.5;
+    const cy = height * 0.62;
+    const labels = ['1/A', '2/B', '3/C', '4/D'];
+
+    drawIsoBlock(
+      ctx,
+      cx,
+      cy + 25,
+      360,
+      150,
+      20,
+      '#475569',
+      '#334155',
+      '#1e293b',
+      '#f97316'
+    );
+    drawDetailedObject2D(ctx, 'parcel', cx, cy + 5, '#d97706', this.elapsedTime, 1.2);
+
+    CONVEYOR_CHUTE_SPECS.forEach((ch, idx) => {
+      const chx = cx + (idx - 1.5) * 95;
+      drawIsoBlock(
+        ctx,
+        chx,
+        cy - 30,
+        68,
+        34,
+        38,
+        ch.cssHex,
+        '#1e293b',
+        '#0f172a',
+        '#ffffff'
+      );
+      drawCanvasTargetReticle(
+        ctx,
+        chx,
+        cy - 54,
+        labels[idx],
+        ch.cssHex,
+        this.elapsedTime,
+        this.conveyorGateIdx === idx
+      );
+      this.hotspots.push({
+        id: `chute_${idx}`,
+        screenX: chx,
+        screenY: cy - 30,
+        radius: 42,
+        action: () => this.callbacks.onBatch2OptionClick?.(idx)
+      });
+    });
+  }
+
+  // ==========================================================================
+  // #18 TEBAK BANGUN & BAYANGAN (CRYSTAL PRISM MODELS & LASER)
+  // ==========================================================================
+
+  private renderPrismLaserIso(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number
+  ): void {
+    const cx = width * 0.5;
+    const cy = height * 0.58;
+    const labels = ['1/A', '2/B', '3/C', '4/D'];
+
+    drawDetailedObject2D(ctx, 'prism', cx, cy - 8, '#38bdf8', this.elapsedTime, 1.3);
+
+    PRISM_MONUMENT_SPECS.forEach((m, idx) => {
+      const mx = cx + (idx % 2 === 0 ? -170 : 170);
+      const my = cy + (idx < 2 ? -55 : 65);
+      drawDetailedObject2D(ctx, 'prism', mx, my - 10, m.cssHex, this.elapsedTime, 1.15);
+      drawCanvasTargetReticle(
+        ctx,
+        mx,
+        my - 28,
+        labels[idx],
+        m.cssHex,
+        this.elapsedTime,
+        this.prismAimIdx === idx
+      );
+      this.hotspots.push({
+        id: `prism_${idx}`,
+        screenX: mx,
+        screenY: my,
+        radius: 44,
+        action: () => this.callbacks.onBatch2OptionClick?.(idx)
+      });
+
+      if (this.prismAimIdx === idx && this.prismLaserTimer > 0) {
+        ctx.strokeStyle = '#22d3ee';
+        ctx.lineWidth = 5;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - 22);
+        ctx.lineTo(mx, my - 22);
+        ctx.stroke();
+      }
+    });
+  }
+
+  // ==========================================================================
+  // #19 TARIK TAMBANG JUARA (VERSUS TUG-OF-WAR TEAMS)
+  // ==========================================================================
+
+  private renderTugOfWarIso(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number
+  ): void {
+    const cx = width * 0.5;
+    const cy = height * 0.62;
+    const shift = this.tugRopeOffset * 22;
+
+    drawIsoBlock(
+      ctx,
+      cx,
+      cy + 20,
+      440,
+      160,
+      16,
+      '#334155',
+      '#1e293b',
+      '#0f172a',
+      '#eab308'
+    );
+
+    ctx.strokeStyle = '#fde047';
+    ctx.lineWidth = 6;
+    ctx.beginPath();
+    ctx.moveTo(cx - 170 + shift, cy - 18);
+    ctx.lineTo(cx + 170 + shift, cy - 18);
+    ctx.stroke();
+
+    // Center Red Flag on Rope
+    ctx.fillStyle = '#ef4444';
+    ctx.fillRect(cx - 4 + shift, cy - 18, 8, 18);
+
+    // Player Team (2 Avatars)
+    drawPixelStudentAvatar(
+      ctx,
+      cx - 120 + shift,
+      cy,
+      this.uniform,
+      this.accessories,
+      this.elapsedTime * 2,
+      true,
+      1,
+      1,
+      3.5,
+      this.feverActive,
+      this.getExtraLoadout()
+    );
+    drawPixelStudentAvatar(
+      ctx,
+      cx - 165 + shift,
+      cy + 4,
+      'pramuka',
+      ['topi_pramuka'],
+      this.elapsedTime * 2,
+      true,
+      1,
+      1,
+      3.1,
+      false
+    );
+
+    // Rival Robot Team (2 Robots)
+    drawDetailedObject2D(ctx, 'robot', cx + 120 + shift, cy - 2, '#ef4444', this.elapsedTime, 1.15);
+    drawDetailedObject2D(ctx, 'robot', cx + 165 + shift, cy + 2, '#ef4444', this.elapsedTime, 1.0);
+  }
+
+  // ==========================================================================
+  // #20 ARENA BOSS AKHIR (COLOSSAL GOLEM BOSS MODEL & 4 ELEMENTAL PILLARS)
+  // ==========================================================================
+
+  private renderBossBattleIso(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number
+  ): void {
+    const cx = width * 0.5;
+    const cy = height * 0.58;
+    const labels = ['1/A', '2/B', '3/C', '4/D'];
+
+    const shake =
+      this.bossHitFlash > 0 ? Math.sin(this.elapsedTime * 50) * 8 : 0;
+    drawDetailedObject2D(
+      ctx,
+      'golem_boss',
+      cx + shake,
+      cy - 10,
+      '#e11d48',
+      this.elapsedTime,
+      1.25
+    );
+
+    BOSS_PILLAR_SPECS.forEach((p, idx) => {
+      const px = cx + (idx % 2 === 0 ? -185 : 185);
+      const py = cy + (idx < 2 ? -35 : 70);
+      drawIsoBlock(
+        ctx,
+        px,
+        py,
+        68,
+        34,
+        56,
+        p.cssHex,
+        '#1e293b',
+        '#0f172a',
+        '#ffffff'
+      );
+      drawCanvasTargetReticle(
+        ctx,
+        px,
+        py - 36,
+        labels[idx],
+        p.cssHex,
+        this.elapsedTime,
+        this.bossBeamPillar === idx
+      );
+      this.hotspots.push({
+        id: `pillar_${idx}`,
+        screenX: px,
+        screenY: py,
+        radius: 44,
+        action: () => this.callbacks.onBatch2OptionClick?.(idx)
+      });
+
+      if (this.bossBeamPillar === idx && this.bossHitFlash > 0) {
+        ctx.strokeStyle = this.bossUltimateActive ? '#22d3ee' : p.cssHex;
+        ctx.lineWidth = this.bossUltimateActive ? 8 : 4;
+        ctx.beginPath();
+        ctx.moveTo(px, py - 50);
+        ctx.lineTo(cx, cy - 55);
+        ctx.stroke();
+      }
+    });
+
+    drawPixelStudentAvatar(
+      ctx,
+      cx,
+      cy + 85,
+      this.uniform,
+      this.accessories,
+      this.elapsedTime,
+      false,
+      1,
+      1,
+      3.5,
+      this.feverActive,
+      this.getExtraLoadout()
+    );
   }
 }

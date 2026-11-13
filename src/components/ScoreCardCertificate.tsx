@@ -131,7 +131,7 @@ export const ScoreCardCertificate: React.FC<ScoreCardCertificateProps> = ({
     ctx.fillStyle = '#f59e0b';
     ctx.font = 'bold 16px monospace';
     ctx.fillText(
-      'EDUVERSE 3D · SERTIFIKAT & KARTU HASIL BELAJAR INTERAKTIF',
+      'EDUZONE · SERTIFIKAT & KARTU HASIL BELAJAR INTERAKTIF',
       64,
       78
     );

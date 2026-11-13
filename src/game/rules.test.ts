@@ -1,9 +1,35 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import * as THREE from 'three';
 import {
   DEFAULT_QUESTION_PACK,
   MINI_GAME_REGISTRY
 } from './questions';
+import {
+  BIOME_LIGHTING_PRESETS,
+  computeProximityGlowIntensity,
+  evaluateWaterWaveDisplacement
+} from './GraphicsEngine';
+import {
+  CameraController,
+  computeDynamicDifficulty,
+  getComboStreakTier,
+  JuiceManager,
+  PhysicsCharacterController
+} from './JuiceEngine';
+import {
+  computeQuestionTimerVisual,
+  computeStarRating,
+  computeThumbstickVector,
+  getMiniGameControlBriefing,
+  UIManager
+} from './UIManager';
+import {
+  BIOME_PIXEL_PALETTES,
+  computeIsoDepthKey,
+  isoScreenToWorld,
+  worldToIsoScreen
+} from './IsoPixelEngine';
 import {
   buildProgramToStation,
   calculateAnswerReward,
@@ -78,17 +104,36 @@ test('XP and Level progression calculations are accurate', () => {
   assert.equal(getXpProgressInLevel(245), 45);
 });
 
-test('calculateAnswerReward increments combo streak and scales coins/xp', () => {
+test('calculateAnswerReward increments combo streak, triggers Fever Mode at 3+ streak, and doubles/5x rewards', () => {
   const r1 = calculateAnswerReward(true, 0, 20, 30);
   assert.equal(r1.nextStreak, 1);
+  assert.equal(r1.multiplier, 1);
+  assert.equal(r1.isFever, false);
   assert.equal(r1.coinsDelta, 20);
+  assert.equal(r1.xpDelta, 30);
 
-  const r2 = calculateAnswerReward(true, 2, 20, 30);
-  assert.equal(r2.nextStreak, 3);
+  const r2 = calculateAnswerReward(true, 1, 20, 30);
+  assert.equal(r2.nextStreak, 2);
+  assert.equal(r2.multiplier, 2);
+  assert.equal(r2.isFever, false);
   assert.equal(r2.coinsDelta, 30);
+
+  const r3 = calculateAnswerReward(true, 2, 20, 30);
+  assert.equal(r3.nextStreak, 3);
+  assert.equal(r3.multiplier, 3);
+  assert.equal(r3.isFever, true);
+  assert.equal(r3.coinsDelta, 40);
+  assert.equal(r3.xpDelta, 60);
+
+  const r5 = calculateAnswerReward(true, 4, 20, 30);
+  assert.equal(r5.nextStreak, 5);
+  assert.equal(r5.multiplier, 5);
+  assert.equal(r5.isFever, true);
+  assert.equal(r5.xpDelta, 150);
 
   const wrong = calculateAnswerReward(false, 4, 20, 30);
   assert.equal(wrong.nextStreak, 0);
+  assert.equal(wrong.isFever, false);
   assert.equal(wrong.coinsDelta, 0);
 });
 
@@ -357,5 +402,168 @@ test('Teacher Studio extractYoutubeVideoId, generateGeminiTeacherPrompt, and for
   assert.ok(wa.waUrl.startsWith('https://wa.me/6281234567890?text='));
 });
 
+test('GraphicsEngine BIOME_LIGHTING_PRESETS, proximity Rim Glow, and water wave math work accurately', () => {
+  assert.equal(BIOME_LIGHTING_PRESETS.kota_ilmu.hemiSkyColor, 0x87ceeb);
+  assert.equal(BIOME_LIGHTING_PRESETS.kota_ilmu.hemiGroundColor, 0x1e293b);
+  assert.equal(BIOME_LIGHTING_PRESETS.kota_ilmu.hemiIntensity, 0.7);
+  assert.equal(BIOME_LIGHTING_PRESETS.kota_ilmu.sunColor, 0xfffbeb);
+  assert.equal(BIOME_LIGHTING_PRESETS.kota_ilmu.sunIntensity, 1.4);
 
+  // Proximity Rim Glow is 0 outside trigger radius and > 0 inside
+  assert.equal(computeProximityGlowIntensity(18, 12, 0), 0);
+  const nearGlow = computeProximityGlowIntensity(2.5, 12, 0.3);
+  assert.ok(nearGlow > 0.45 && nearGlow <= 1.0);
+
+  // Periodic water wave displacement varies smoothly over uTime
+  const h0 = evaluateWaterWaveDisplacement(2.0, -1.5, 0);
+  const h1 = evaluateWaterWaveDisplacement(2.0, -1.5, 1.2);
+  assert.notEqual(h0, h1);
+  assert.ok(Math.abs(h1) < 0.25);
+});
+
+test('JuiceEngine getComboStreakTier and computeDynamicDifficulty scale accurately', () => {
+  assert.equal(getComboStreakTier(1).multiplier, 1);
+  assert.equal(getComboStreakTier(2).multiplier, 2);
+  assert.equal(getComboStreakTier(3).multiplier, 3);
+  assert.equal(getComboStreakTier(3).isFever, true);
+  assert.equal(getComboStreakTier(5).multiplier, 5);
+  assert.equal(getComboStreakTier(5).label, '5x FEVER MODE!');
+
+  const baseDda = computeDynamicDifficulty(0, 0);
+  const highDda = computeDynamicDifficulty(450, 5);
+  assert.equal(baseDda.runnerSpeed, 16);
+  assert.ok(highDda.runnerSpeed > baseDda.runnerSpeed);
+  assert.ok(highDda.monsterSpeedMultiplier > baseDda.monsterSpeedMultiplier);
+  assert.ok(highDda.goalieCountdownSec < baseDda.goalieCountdownSec);
+  assert.ok(highDda.opponentAggression > baseDda.opponentAggression);
+});
+
+test('PhysicsCharacterController Squash & Stretch, CameraController Dynamic FOV, and JuiceManager Micro Hit-Stop work accurately', () => {
+  const phys = new PhysicsCharacterController();
+  const avatar = new THREE.Group();
+  phys.attachToAvatar(avatar);
+
+  // Jump triggers takeoff squash (1.15, 0.85, 1.15)
+  const jumped = phys.triggerJump(10);
+  assert.equal(jumped, true);
+  assert.equal(phys.scaleState.x, 1.15);
+  assert.equal(phys.scaleState.y, 0.85);
+  assert.equal(phys.scaleState.z, 1.15);
+
+  // Airborne updates stretch toward (0.9, 1.15, 0.9)
+  for (let i = 0; i < 6; i++) {
+    phys.update(0.016, i * 0.016, 0, -1, true, 42, avatar);
+  }
+  assert.ok(phys.jumpY > 0);
+  assert.ok(avatar.scale.y > 1.0);
+  assert.ok(avatar.scale.x < 1.05);
+
+  // CameraController widens FOV from 60 toward 72 in Lari Kilat / Sprint
+  const cam = new THREE.PerspectiveCamera(60, 16 / 9, 0.1, 200);
+  const camCtrl = new CameraController(cam);
+  for (let i = 0; i < 20; i++) {
+    camCtrl.updateFollow(
+      0.03,
+      new THREE.Vector3(0, 6, 10),
+      new THREE.Vector3(0, 2, -10),
+      'lari_kilat',
+      true
+    );
+  }
+  assert.ok(cam.fov > 66 && cam.fov <= 72);
+
+  // JuiceManager Micro Hit-Stop sets timeScale = 0.1 for 80ms, then recovers to 1.0
+  const scene = new THREE.Scene();
+  const juice = new JuiceManager(scene);
+  juice.triggerHitStop(0.08, 0.1);
+  assert.equal(juice.getTimeScale(), 0.1);
+  const scaledDt = juice.update(0.04);
+  assert.ok(Math.abs(scaledDt - 0.004) < 1e-6);
+  juice.update(0.05);
+  assert.equal(juice.getTimeScale(), 1.0);
+});
+
+test('UIManager computes 1-3 Star ratings, curved timer states (Blue->Yellow->Blinking Red), thumbstick vectors, and [1]-[4] shortcuts', () => {
+  // 1-3 Star Rating thresholds (default target 240: 84 -> 1★, 168 -> 2★, 240 -> 3★)
+  assert.equal(computeStarRating(0).stars, 0);
+  assert.equal(computeStarRating(95).stars, 1);
+  assert.equal(computeStarRating(210).stars, 2);
+  const s3 = computeStarRating(350);
+  assert.equal(s3.stars, 3);
+  assert.equal(s3.progressPct, 100);
+
+  // Curved Timer: Blue (>55%) -> Yellow (25..55%) -> Blinking Red (<25%)
+  const tBlue = computeQuestionTimerVisual(12, 16);
+  assert.equal(tBlue.phase, 'blue');
+  assert.equal(tBlue.colorHex, '#0066FF');
+  assert.equal(tBlue.isBlinking, false);
+
+  const tYellow = computeQuestionTimerVisual(6, 16);
+  assert.equal(tYellow.phase, 'yellow');
+  assert.equal(tYellow.colorHex, '#facc15');
+  assert.equal(tYellow.isBlinking, false);
+
+  const tRed = computeQuestionTimerVisual(3, 16);
+  assert.equal(tRed.phase, 'red');
+  assert.equal(tRed.colorHex, '#f43f5e');
+  assert.equal(tRed.isBlinking, true);
+
+  // Floating Thumbstick vector clamping and center zeroing
+  const dead = computeThumbstickVector(50, 50, 50, 50, 44);
+  assert.equal(dead.dx, 0);
+  assert.equal(dead.dy, 0);
+
+  const clamped = computeThumbstickVector(50, 50, 150, 50, 44);
+  assert.equal(clamped.clampedX, 44);
+  assert.equal(clamped.dx, 1);
+
+  // Keyboard shortcuts [1/A]..[4/D]
+  assert.equal(UIManager.resolveShortcutKeyToOptionIndex('Digit1'), 0);
+  assert.equal(UIManager.resolveShortcutKeyToOptionIndex('Digit4'), 3);
+  assert.equal(UIManager.resolveShortcutKeyToOptionIndex('Numpad2'), 1);
+  assert.equal(UIManager.resolveShortcutKeyToOptionIndex('KeyW'), null);
+
+  // Control briefing exists for all 20 mini-games
+  for (const slot of MINI_GAME_REGISTRY) {
+    const brief = getMiniGameControlBriefing(slot.engineId);
+    assert.ok(brief.threeStarScore >= 240);
+    assert.ok(brief.objective.length > 10);
+  }
+});
+
+test('IsoPixelEngine 2:1 Isometric projection round-trips cleanly, sorts depth, and EDUZONE branding is active', () => {
+  const originX = 640;
+  const originY = 360;
+  const iso = worldToIsoScreen(3, -2, 0, originX, originY);
+  const world = isoScreenToWorld(iso.x, iso.y, originX, originY);
+  assert.equal(world.gridX, 3);
+  assert.equal(world.gridZ, -2);
+
+  // Painter's algorithm depth increases from north-west (-3,-3) to south-east (3,3)
+  assert.ok(computeIsoDepthKey(3, 3) > computeIsoDepthKey(-3, -3));
+  assert.equal(BIOME_PIXEL_PALETTES.kota_ilmu.accentHex, '#0066FF');
+
+  // Verify EDUZONE branding in prompt and WhatsApp score report
+  const prompt = generateGeminiTeacherPrompt({
+    title: 'Kuis IPA',
+    subject: 'Sains',
+    grade: 'SD',
+    topic: 'Ekosistem',
+    count: 10
+  });
+  assert.ok(prompt.includes('EDUZONE'));
+
+  const wa = formatWhatsAppScoreReport({
+    studentName: 'Siti',
+    level: 2,
+    packTitle: 'Kuis IPA',
+    subject: 'Sains',
+    grade: 'SD',
+    gameTitle: 'Jelajah Dunia',
+    score: 250,
+    bestScore: 250,
+    status: 'victory'
+  });
+  assert.ok(wa.message.includes('EDUZONE'));
+});
 

@@ -7,6 +7,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   ACCESSORY_ITEMS,
   AccessoryId,
+  AURA_ITEMS,
+  AuraId,
   BIOMES,
   BiomeId,
   CostumeUniformId,
@@ -14,9 +16,15 @@ import {
   DETECTIVE_CASES,
   MINI_GAME_REGISTRY,
   MiniGameSlot,
+  PET_ITEMS,
+  PetId,
   PlayableGameId,
   PlayerProfile,
+  PROP_WEAPON_ITEMS,
+  PropWeaponId,
   QuestionPack,
+  THEME_COLOR_ITEMS,
+  ThemeColorId,
   UNIFORM_ITEMS
 } from './game/questions';
 import {
@@ -52,17 +60,41 @@ import {
   STORAGE_KEY_PROFILE
 } from './game/rules';
 import { SceneController } from './game/SceneController';
+import {
+  computeDynamicDifficulty,
+  getComboStreakTier
+} from './game/JuiceEngine';
 import { soundManager } from './game/sound';
 import { TitleScreen } from './components/TitleScreen';
 import {
   BiomeModal,
   MiniGamesModal,
+  ShopPreviewLoadout,
   StudentMaterialModal,
   TeacherModal,
   WardrobeModal
 } from './components/GameModals';
 import { ScoreCardCertificate } from './components/ScoreCardCertificate';
 import { ActiveModeHud } from './components/ActiveModeHud';
+import {
+  FloatingThumbstick,
+  MissionBriefingCard
+} from './components/ErgonomicHudWidgets';
+import {
+  BottomNavTabId,
+  DualZoneTouchGamepad,
+  HelpGuideModal,
+  MobileBottomNavBar,
+  QuickGameDrawer,
+  TopCompactBar,
+  TouchControlMode
+} from './components/ModernGameLayout';
+import {
+  computeStarRating,
+  getMiniGameControlBriefing,
+  UIManager,
+  uiManager
+} from './game/UIManager';
 
 type GameShellState = 'title' | 'playing' | 'paused' | 'gameover';
 
@@ -115,10 +147,21 @@ export default function App() {
   const [isMuted, setIsMuted] = useState(false);
   const [dockCollapsed, setDockCollapsed] = useState(false);
 
+  // New Modern UI States
+  const [cameraZoom, setCameraZoomState] = useState<number>(1.0);
+  const [showHelpModal, setShowHelpModal] = useState<boolean>(false);
+  const [quickDrawerOpen, setQuickDrawerOpen] = useState<boolean>(false);
+  const [activeBottomTab, setActiveBottomTab] = useState<BottomNavTabId>('dunia');
+  const [touchControlMode, setTouchControlMode] = useState<TouchControlMode>('auto');
+
   // Active modals
   const [openModal, setOpenModal] = useState<
     'minigames' | 'wardrobe' | 'biome' | 'teacher' | 'materi' | 'scorecard' | null
   >(null);
+
+  // 1.5s Interactive Mission Briefing Card state during mini-game switches
+  const [briefingSlot, setBriefingSlot] = useState<MiniGameSlot | null>(null);
+  const briefingTimerRef = useRef<number | null>(null);
 
   // Universal Question Engine runtime state
   const [questionIdx, setQuestionIdx] = useState(0);
@@ -256,15 +299,16 @@ export default function App() {
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
 
-  // Mirror shellState to document.body.dataset.state
+  // Mirror shellState to document.body.dataset.state & control 3D Wardrobe Camera Fly-In
   useEffect(() => {
     document.body.dataset.state = shellState;
     if (sceneCtrlRef.current) {
       sceneCtrlRef.current.setTitleTour(shellState === 'title');
+      sceneCtrlRef.current.setWardrobeInspection(openModal === 'wardrobe');
       sceneCtrlRef.current.setPaused(
         shellState === 'paused' ||
           shellState === 'gameover' ||
-          openModal !== null
+          (openModal !== null && openModal !== 'wardrobe')
       );
     }
   }, [shellState, openModal]);
@@ -290,6 +334,12 @@ export default function App() {
     setStreak(reward.nextStreak);
     const nextScore = sessionScore + (isCorrect ? reward.xpDelta : 0);
     setSessionScore(nextScore);
+    sceneCtrlRef.current?.triggerAnswerFeedbackParticles(
+      isCorrect,
+      reward.nextStreak,
+      reward.xpDelta,
+      nextScore
+    );
 
     setProfile((prev) => {
       const newXp = prev.xp + reward.xpDelta;
@@ -481,18 +531,23 @@ export default function App() {
     };
   });
 
-  // Periodic HUD ticker for Goalie Reflex shot timer
+  // Periodic HUD ticker for Goalie Reflex shot timer (scaled by DDA)
   useEffect(() => {
     if (shellState !== 'playing' || openModal !== null) return;
     if (activeSlot.engineId !== 'penjaga_gawang') return;
+    const ddaCountdown = computeDynamicDifficulty(
+      sessionScore,
+      streak
+    ).goalieCountdownSec;
     const timer = window.setInterval(() => {
       setGoalieStats((prev) => ({
         ...prev,
-        shotCountdown: prev.shotCountdown <= 1 ? 6 : prev.shotCountdown - 1
+        shotCountdown:
+          prev.shotCountdown <= 1 ? ddaCountdown : prev.shotCountdown - 1
       }));
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [shellState, openModal, activeSlot.engineId]);
+  }, [shellState, openModal, activeSlot.engineId, sessionScore, streak]);
 
   // Mount Three.js WebGLRenderer once
   useEffect(() => {
@@ -513,7 +568,12 @@ export default function App() {
         callbacksRef.current.onBatch2OptionClick?.(idx)
     });
     ctrl.setQuestionPack(questionPack);
-    ctrl.setWardrobe(profile.uniform, profile.accessories);
+    ctrl.setWardrobe(profile.uniform, profile.accessories, {
+      aura: profile.aura || 'none',
+      pet: profile.pet || 'none',
+      propWeapon: profile.propWeapon || 'none',
+      themeColor: profile.themeColor || 'klasik'
+    });
     ctrl.setTitleTour(shellState === 'title');
     sceneCtrlRef.current = ctrl;
 
@@ -547,13 +607,66 @@ export default function App() {
         } else if (shellState === 'paused') {
           setShellState('playing');
         }
-      } else if (e.code === 'KeyH' && shellState === 'playing' && !openModal) {
+        return;
+      }
+
+      if (e.code === 'KeyH' && shellState === 'playing' && !openModal) {
         setDockCollapsed((c) => !c);
+        return;
+      }
+
+      // [1/A]..[4/D] Ergonomic Question Deck keyboard shortcuts
+      const shortcutIdx = UIManager.resolveShortcutKeyToOptionIndex(e.code);
+      if (
+        shortcutIdx !== null &&
+        shellState === 'playing' &&
+        openModal === null
+      ) {
+        uiManager.triggerTactileClick(30);
+        if (activeSlot.engineId === 'jelajah_dunia' && hubQuizModal?.open) {
+          handleAnswerHubQuiz(shortcutIdx);
+        } else if (activeSlot.engineId === 'jatuh_bangun') {
+          handleAnswerTower(shortcutIdx);
+        } else if (activeSlot.engineId === 'detektif_kota') {
+          handleAnswerTkpQuestion(shortcutIdx);
+        } else if (activeSlot.engineId === 'pasar_nusantara') {
+          handleAnswerPasarOrder(shortcutIdx);
+        } else if (activeSlot.engineId === 'jembatan_juara') {
+          handleAnswerBridgeStep(shortcutIdx);
+        } else if (activeSlot.engineId === 'pertahanan_kastil') {
+          handleAnswerCastleDefense(shortcutIdx);
+        } else if (activeSlot.engineId === 'balap_roket') {
+          handleAnswerRocketRing(shortcutIdx);
+        } else if (activeSlot.engineId === 'arsitek_menara') {
+          handleAnswerArchitectBlock(shortcutIdx);
+        } else if (activeSlot.engineId === 'labirin_minotaur') {
+          handleAnswerMazeGate(shortcutIdx);
+        } else if (activeSlot.engineId === 'panahan_katapel') {
+          handleAnswerCatapultShot(shortcutIdx);
+        } else if (activeSlot.engineId === 'sirkuit_logika') {
+          handleLoadRobotPresetStation(shortcutIdx);
+        } else if (activeSlot.engineId === 'selam_samudra') {
+          handleAnswerSubmarineChest(shortcutIdx);
+        } else if (activeSlot.engineId === 'koki_kimia') {
+          handleAnswerChemTube(shortcutIdx);
+        } else if (activeSlot.engineId === 'ekspedisi_pinisi') {
+          handleAnswerPinisiIsland(shortcutIdx);
+        } else if (activeSlot.engineId === 'penjaga_gawang') {
+          handleAnswerGoalieZone(shortcutIdx);
+        } else if (activeSlot.engineId === 'pabrik_sortir') {
+          handleAnswerConveyorChute(shortcutIdx);
+        } else if (activeSlot.engineId === 'tebak_bangun') {
+          handleAimPrismMonument(shortcutIdx);
+        } else if (activeSlot.engineId === 'tarik_tambang') {
+          handleAnswerTugOfWar(shortcutIdx);
+        } else if (activeSlot.engineId === 'arena_boss') {
+          handleAnswerBossPillar(shortcutIdx);
+        }
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [shellState, openModal]);
+  });
 
   const handleStartGame = () => {
     if (document.activeElement instanceof HTMLElement) {
@@ -637,6 +750,17 @@ export default function App() {
     setQuestionIdx((i) => i + 1);
     sceneCtrlRef.current?.setMode(slot.engineId, nextQ, questionPack);
     setShellState('playing');
+
+    // Trigger 1.5s Interactive Mission Briefing Card
+    uiManager.triggerTactileClick(25);
+    setBriefingSlot(slot);
+    if (briefingTimerRef.current !== null) {
+      window.clearTimeout(briefingTimerRef.current);
+    }
+    briefingTimerRef.current = window.setTimeout(() => {
+      setBriefingSlot(null);
+      briefingTimerRef.current = null;
+    }, 1500);
   };
 
   // Mode 1: Jelajah Dunia Building / NPC Answer Handler
@@ -1686,7 +1810,7 @@ export default function App() {
           type: 'victory',
           title: 'Golem Raksasa Ilmu Berhasil Ditaklukkan!',
           subtitle:
-            'Peti Harta Karun Abadi Terbuka di tengah Colosseum! Kamu menamatkan tantangan puncak EDUVERSE 3D!',
+            'Peti Harta Karun Abadi Terbuka di tengah Colosseum! Kamu menamatkan tantangan puncak EDUZONE!',
           score: sessionScore + 320,
           best: Math.max(
             profile.highScores.arena_boss || 0,
@@ -1715,34 +1839,131 @@ export default function App() {
     }
   };
 
-  // Wardrobe Uniform & Accessory Handlers
+  // New Action Handlers: Home, Restart, Zoom, Fullscreen, Help, Bottom Navigation
+  const handleGoHome = () => {
+    setOpenModal(null);
+    setHubQuizModal(null);
+    setOutcomeSnapshot(null);
+    setShellState('title');
+    soundManager.stopAmbient();
+  };
+
+  const handleRestartGame = () => {
+    handleSwitchMiniGameSlot(activeSlot);
+    showFeedback(true, `Tantangan "${activeSlot.title}" diulang dari awal!`);
+  };
+
+  const handleZoomIn = () => {
+    sceneCtrlRef.current?.setCameraZoom(0.15);
+    const z = sceneCtrlRef.current?.getCameraZoom() ?? 1.0;
+    setCameraZoomState(z);
+  };
+
+  const handleZoomOut = () => {
+    sceneCtrlRef.current?.setCameraZoom(-0.15);
+    const z = sceneCtrlRef.current?.getCameraZoom() ?? 1.0;
+    setCameraZoomState(z);
+  };
+
+  const handleResetZoom = () => {
+    sceneCtrlRef.current?.resetCameraZoom();
+    setCameraZoomState(1.0);
+  };
+
+  const handleToggleFullscreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => {});
+    } else {
+      document.exitFullscreen().catch(() => {});
+    }
+  };
+
+  const handleSelectBottomNavTab = (tab: BottomNavTabId) => {
+    setActiveBottomTab(tab);
+    if (tab === 'dunia') {
+      if (activeSlot.engineId !== 'jelajah_dunia') {
+        handleSwitchMiniGameSlot(MINI_GAME_REGISTRY[0]);
+      } else {
+        setOpenModal('biome');
+      }
+    } else if (tab === 'minigames') {
+      setQuickDrawerOpen(true);
+    } else if (tab === 'wardrobe') {
+      setOpenModal('wardrobe');
+    } else if (tab === 'materi') {
+      setOpenModal('materi');
+    } else if (tab === 'teacher') {
+      setOpenModal('teacher');
+    }
+  };
+
+  // Total Mini-Game Stars earned across all 20 games
+  const totalStarsEarned = MINI_GAME_REGISTRY.reduce((acc, s) => {
+    const spec = getMiniGameControlBriefing(s.engineId);
+    const info = computeStarRating(
+      profile.highScores[s.engineId] || 0,
+      spec.threeStarScore
+    );
+    return acc + info.stars;
+  }, 0);
+
+  const syncLoadoutToCanvas = (p: PlayerProfile) => {
+    sceneCtrlRef.current?.setWardrobe(p.uniform, p.accessories, {
+      aura: p.aura || 'none',
+      pet: p.pet || 'none',
+      propWeapon: p.propWeapon || 'none',
+      themeColor: p.themeColor || 'klasik'
+    });
+  };
+
+  // Interactive Shop Try-On Preview Handler
+  const handlePreviewShopLoadout = (preview: ShopPreviewLoadout) => {
+    sceneCtrlRef.current?.setWardrobe(preview.uniform, preview.accessories, {
+      aura: preview.aura,
+      pet: preview.pet,
+      propWeapon: preview.propWeapon,
+      themeColor: preview.themeColor
+    });
+  };
+
+  // 1. Uniform / Costume Handler
   const handleSelectUniform = (id: CostumeUniformId) => {
     const item = UNIFORM_ITEMS.find((u) => u.id === id);
     if (!item) return;
     setProfile((prev) => {
       const unlocked = prev.unlockedUniforms.includes(id);
-      if (!unlocked && prev.coins < item.cost) return prev;
+      const meetsLevel = !item.minLevel || prev.level >= item.minLevel;
+      const meetsStars = !item.minStars || totalStarsEarned >= item.minStars;
+      if (!unlocked && (!meetsLevel || !meetsStars || prev.coins < item.cost)) {
+        return prev;
+      }
       const nextCoins = unlocked ? prev.coins : prev.coins - item.cost;
       const nextUnlocked = unlocked
         ? prev.unlockedUniforms
         : [...prev.unlockedUniforms, id];
-      sceneCtrlRef.current?.setWardrobe(id, prev.accessories);
-      soundManager.playCoin();
-      return {
+      const nextProfile: PlayerProfile = {
         ...prev,
         coins: nextCoins,
         uniform: id,
         unlockedUniforms: nextUnlocked
       };
+      syncLoadoutToCanvas(nextProfile);
+      soundManager.playCoin();
+      return nextProfile;
     });
   };
 
+  // 2. Hat / Crown / Glasses / Accessory Handler
   const handleToggleAccessory = (id: AccessoryId) => {
     const item = ACCESSORY_ITEMS.find((a) => a.id === id);
     if (!item) return;
     setProfile((prev) => {
       const unlocked = prev.unlockedAccessories.includes(id);
-      if (!unlocked && prev.coins < item.cost) return prev;
+      const meetsLevel = !item.minLevel || prev.level >= item.minLevel;
+      const meetsStars = !item.minStars || totalStarsEarned >= item.minStars;
+      if (!unlocked && (!meetsLevel || !meetsStars || prev.coins < item.cost)) {
+        return prev;
+      }
       const nextCoins = unlocked ? prev.coins : prev.coins - item.cost;
       const nextUnlocked = unlocked
         ? prev.unlockedAccessories
@@ -1751,24 +1972,129 @@ export default function App() {
       const nextAccessories = equipped
         ? prev.accessories.filter((a) => a !== id)
         : [...prev.accessories, id];
-      sceneCtrlRef.current?.setWardrobe(prev.uniform, nextAccessories);
-      soundManager.playCoin();
-      return {
+      const nextProfile: PlayerProfile = {
         ...prev,
         coins: nextCoins,
         accessories: nextAccessories,
         unlockedAccessories: nextUnlocked
       };
+      syncLoadoutToCanvas(nextProfile);
+      soundManager.playCoin();
+      return nextProfile;
+    });
+  };
+
+  // 3. Aura & Footstep Trail Handler
+  const handleSelectAura = (id: AuraId) => {
+    const item = AURA_ITEMS.find((a) => a.id === id);
+    if (!item) return;
+    setProfile((prev) => {
+      const unlockedList = prev.unlockedAuras || ['none'];
+      const unlocked = unlockedList.includes(id);
+      const meetsLevel = !item.minLevel || prev.level >= item.minLevel;
+      const meetsStars = !item.minStars || totalStarsEarned >= item.minStars;
+      if (!unlocked && (!meetsLevel || !meetsStars || prev.coins < item.cost)) {
+        return prev;
+      }
+      const nextCoins = unlocked ? prev.coins : prev.coins - item.cost;
+      const nextUnlocked = unlocked ? unlockedList : [...unlockedList, id];
+      const nextProfile: PlayerProfile = {
+        ...prev,
+        coins: nextCoins,
+        aura: id,
+        unlockedAuras: nextUnlocked
+      };
+      syncLoadoutToCanvas(nextProfile);
+      soundManager.playCoin();
+      return nextProfile;
+    });
+  };
+
+  // 4. Companion Pet / Drone Handler
+  const handleSelectPet = (id: PetId) => {
+    const item = PET_ITEMS.find((p) => p.id === id);
+    if (!item) return;
+    setProfile((prev) => {
+      const unlockedList = prev.unlockedPets || ['none'];
+      const unlocked = unlockedList.includes(id);
+      const meetsLevel = !item.minLevel || prev.level >= item.minLevel;
+      const meetsStars = !item.minStars || totalStarsEarned >= item.minStars;
+      if (!unlocked && (!meetsLevel || !meetsStars || prev.coins < item.cost)) {
+        return prev;
+      }
+      const nextCoins = unlocked ? prev.coins : prev.coins - item.cost;
+      const nextUnlocked = unlocked ? unlockedList : [...unlockedList, id];
+      const nextProfile: PlayerProfile = {
+        ...prev,
+        coins: nextCoins,
+        pet: id,
+        unlockedPets: nextUnlocked
+      };
+      syncLoadoutToCanvas(nextProfile);
+      soundManager.playCoin();
+      return nextProfile;
+    });
+  };
+
+  // 5A. Handheld Prop / Weapon Handler
+  const handleSelectPropWeapon = (id: PropWeaponId) => {
+    const item = PROP_WEAPON_ITEMS.find((w) => w.id === id);
+    if (!item) return;
+    setProfile((prev) => {
+      const unlockedList = prev.unlockedProps || ['none'];
+      const unlocked = unlockedList.includes(id);
+      const meetsLevel = !item.minLevel || prev.level >= item.minLevel;
+      const meetsStars = !item.minStars || totalStarsEarned >= item.minStars;
+      if (!unlocked && (!meetsLevel || !meetsStars || prev.coins < item.cost)) {
+        return prev;
+      }
+      const nextCoins = unlocked ? prev.coins : prev.coins - item.cost;
+      const nextUnlocked = unlocked ? unlockedList : [...unlockedList, id];
+      const nextProfile: PlayerProfile = {
+        ...prev,
+        coins: nextCoins,
+        propWeapon: id,
+        unlockedProps: nextUnlocked
+      };
+      syncLoadoutToCanvas(nextProfile);
+      soundManager.playCoin();
+      return nextProfile;
+    });
+  };
+
+  // 5B. Character Theme Color Handler
+  const handleSelectThemeColor = (id: ThemeColorId) => {
+    const item = THEME_COLOR_ITEMS.find((t) => t.id === id);
+    if (!item) return;
+    setProfile((prev) => {
+      const unlockedList: ThemeColorId[] = prev.unlockedThemes || ['klasik'];
+      const unlocked = unlockedList.includes(id);
+      const meetsLevel = !item.minLevel || prev.level >= item.minLevel;
+      if (!unlocked && (!meetsLevel || prev.coins < item.cost)) {
+        return prev;
+      }
+      const nextCoins = unlocked ? prev.coins : prev.coins - item.cost;
+      const nextUnlocked: ThemeColorId[] = unlocked ? unlockedList : [...unlockedList, id];
+      const nextProfile: PlayerProfile = {
+        ...prev,
+        coins: nextCoins,
+        themeColor: id,
+        unlockedThemes: nextUnlocked
+      };
+      syncLoadoutToCanvas(nextProfile);
+      soundManager.playCoin();
+      return nextProfile;
     });
   };
 
   const xpProgress = getXpProgressInLevel(profile.xp);
   const activeBiomeObj =
     BIOMES.find((b) => b.id === currentBiome) || BIOMES[0];
+  const comboTier = getComboStreakTier(streak);
 
   return (
-    <main className="relative w-screen h-screen overflow-hidden bg-slate-950 select-none">
-      {/* Dedicated WebGL Canvas Mount Container */}
+    <main className="relative w-screen h-screen overflow-hidden bg-zinc-950 select-none">
+      {/* Dedicated Canvas Mount Container */}
       <div
         ref={canvasMountRef}
         data-testid="webgl-canvas-container"
@@ -1779,7 +2105,7 @@ export default function App() {
       {shellState === 'title' && (
         <TitleScreen
           onStartGame={handleStartGame}
-          onOpenMiniGames={() => setOpenModal('minigames')}
+          onOpenMiniGames={() => setQuickDrawerOpen(true)}
           onOpenTeacherMode={() => setOpenModal('teacher')}
           activePackTitle={questionPack.title}
           questionCount={questionPack.questions.length}
@@ -1789,127 +2115,38 @@ export default function App() {
       {/* PLAYING HUD OVERLAY */}
       {shellState !== 'title' && (
         <div className="fixed inset-0 z-10 pointer-events-none flex flex-col justify-between">
-          {/* TOP BAR HUD: Profile, XP Bar, Coins, Wardrobe, World Switcher, 20 Mini-Games, Mode Guru */}
-          <div className="p-3 sm:px-5 flex flex-wrap items-center justify-between gap-2 pointer-events-auto bg-slate-950/90 border-b border-slate-800/90">
-            {/* Left: Player Avatar Badge, Name, Level & XP Progress, Coins */}
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={() => setOpenModal('wardrobe')}
-                aria-label="Profil Pelajar dan Lemari Gaya"
-                className="flex items-center gap-2.5 px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 cursor-pointer"
-              >
-                <div className="w-8 h-8 rounded-lg bg-amber-500 text-slate-950 font-bold font-display flex items-center justify-center text-sm">
-                  L{profile.level}
-                </div>
-                <div className="text-left">
-                  <div className="text-xs font-bold text-white leading-tight">
-                    {profile.name}
-                  </div>
-                  <div className="w-24 h-1.5 bg-slate-800 rounded-full overflow-hidden mt-1">
-                    <div
-                      className="h-full bg-amber-400"
-                      style={{ width: `${xpProgress}%` }}
-                    />
-                  </div>
-                </div>
-              </button>
-
-              <div className="px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs font-bold text-amber-300 font-mono-num whitespace-nowrap">
-                {profile.coins} Koin · {profile.xp} XP
-              </div>
-
-              <div className="hidden 2xl:flex items-center gap-1.5 text-xs text-slate-300 font-mono-num">
-                <span>Mode: {activeSlot.title}</span>
-                <span aria-hidden="true">·</span>
-                <span>Dunia: {activeBiomeObj.name}</span>
-                <span aria-hidden="true">·</span>
-                <span>Buku: {profile.collectedBooks.length}/5</span>
-              </div>
-            </div>
-
-            {/* Right: Core Action Buttons + Utility Icons */}
-            <div className="flex flex-wrap items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => setOpenModal('wardrobe')}
-                className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-semibold text-slate-100 cursor-pointer whitespace-nowrap"
-              >
-                Lemari Gaya
-              </button>
-              <button
-                type="button"
-                onClick={() => setOpenModal('biome')}
-                className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-semibold text-emerald-300 cursor-pointer whitespace-nowrap"
-              >
-                Pilih Dunia ({activeBiomeObj.name})
-              </button>
-              <button
-                type="button"
-                onClick={() => setOpenModal('minigames')}
-                className="px-3.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold cursor-pointer whitespace-nowrap"
-              >
-                20 Mini-Games
-              </button>
-              <button
-                type="button"
-                onClick={() => setOpenModal('materi')}
-                className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-purple-700/70 text-xs font-semibold text-purple-300 cursor-pointer whitespace-nowrap"
-              >
-                Ruang Materi
-              </button>
-              <button
-                type="button"
-                onClick={() => setOpenModal('scorecard')}
-                className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-amber-600/70 text-xs font-semibold text-amber-300 cursor-pointer whitespace-nowrap"
-              >
-                Kartu Nilai
-              </button>
-              <button
-                type="button"
-                onClick={() => setOpenModal('teacher')}
-                className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-cyan-700/70 text-xs font-semibold text-cyan-300 cursor-pointer whitespace-nowrap"
-              >
-                Mode Guru
-              </button>
-
-              {/* Compact SVG Utility Buttons (Mute [M] & Pause [P]) */}
-              <button
-                type="button"
-                tabIndex={-1}
-                aria-label={isMuted ? 'Nyalakan Suara' : 'Bisukan Suara'}
-                onClick={(e) => {
-                  e.currentTarget.blur();
-                  const m = soundManager.toggleMute();
-                  setIsMuted(m);
-                }}
-                className="p-2 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 cursor-pointer"
-              >
-                <svg viewBox="0 0 24 24" className="w-4 h-4 fill-current">
-                  {isMuted ? (
-                    <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z" />
-                  ) : (
-                    <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
-                  )}
-                </svg>
-              </button>
-
-              <button
-                type="button"
-                tabIndex={-1}
-                aria-label="Jeda Permainan"
-                onClick={(e) => {
-                  e.currentTarget.blur();
-                  setShellState((s) => (s === 'paused' ? 'playing' : 'paused'));
-                }}
-                className="p-2 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 cursor-pointer"
-              >
-                <svg viewBox="0 0 24 24" className="w-4 h-4 fill-current">
-                  <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
-                </svg>
-              </button>
-            </div>
-          </div>
+          {/* TOP MICRO STATUS & QUICK SYSTEM BAR */}
+          <TopCompactBar
+            level={profile.level}
+            playerName={profile.name}
+            coins={profile.coins}
+            xp={profile.xp}
+            xpProgress={xpProgress}
+            comboLabel={comboTier.label}
+            isFever={comboTier.isFever}
+            activeGameTitle={activeSlot.title}
+            currentZoom={cameraZoom}
+            isMuted={isMuted}
+            isPaused={shellState === 'paused'}
+            streakCount={streak}
+            onOpenProfile={() => setOpenModal('wardrobe')}
+            onGoHome={handleGoHome}
+            onRestartGame={handleRestartGame}
+            onZoomIn={handleZoomIn}
+            onZoomOut={handleZoomOut}
+            onResetZoom={handleResetZoom}
+            onToggleFullscreen={handleToggleFullscreen}
+            onOpenHelp={() => setShowHelpModal(true)}
+            onToggleMute={() => {
+              const m = soundManager.toggleMute();
+              setIsMuted(m);
+            }}
+            onTogglePause={() => {
+              uiManager.triggerTactileClick(15);
+              setShellState((s) => (s === 'paused' ? 'playing' : 'paused'));
+            }}
+            onOpenSlideMenu={() => setQuickDrawerOpen(true)}
+          />
 
           {/* ACTIVE MINI-GAME INTERACTIVE HUD */}
           <ActiveModeHud
@@ -1975,214 +2212,138 @@ export default function App() {
             onAnswerBossPillar={handleAnswerBossPillar}
           />
 
-          {/* MOBILE / TOUCH VIRTUAL JOYSTICK & ACTION BUTTON + COLLAPSIBLE BOTTOM DOCK */}
-          <div className="relative flex flex-col items-center pb-3 px-4">
-            {/* Touch D-Pad & Jump Button for Mobile/Tablet */}
-            <div className="w-full flex items-end justify-between mb-2 sm:hidden pointer-events-auto">
-              <div className="grid grid-cols-3 gap-1 bg-slate-950/90 p-1.5 rounded-xl border border-slate-800">
-                <div />
-                <button
-                  type="button"
-                  onPointerDown={() =>
-                    sceneCtrlRef.current?.setVirtualJoystick(0, -1)
-                  }
-                  onPointerUp={() =>
-                    sceneCtrlRef.current?.setVirtualJoystick(0, 0)
-                  }
-                  className="w-10 h-10 rounded-lg bg-slate-800 text-white font-bold text-xs flex items-center justify-center"
-                >
-                  ▲
-                </button>
-                <div />
-                <button
-                  type="button"
-                  onPointerDown={() => {
-                    if (activeSlot.engineId === 'lari_kilat') {
-                      sceneCtrlRef.current?.shiftRunnerLane(-1);
-                    } else {
-                      sceneCtrlRef.current?.setVirtualJoystick(-1, 0);
-                    }
-                  }}
-                  onPointerUp={() =>
-                    sceneCtrlRef.current?.setVirtualJoystick(0, 0)
-                  }
-                  className="w-10 h-10 rounded-lg bg-slate-800 text-white font-bold text-xs flex items-center justify-center"
-                >
-                  ◀
-                </button>
-                <button
-                  type="button"
-                  onPointerDown={() =>
-                    sceneCtrlRef.current?.setVirtualJoystick(0, 1)
-                  }
-                  onPointerUp={() =>
-                    sceneCtrlRef.current?.setVirtualJoystick(0, 0)
-                  }
-                  className="w-10 h-10 rounded-lg bg-slate-800 text-white font-bold text-xs flex items-center justify-center"
-                >
-                  ▼
-                </button>
-                <button
-                  type="button"
-                  onPointerDown={() => {
-                    if (activeSlot.engineId === 'lari_kilat') {
-                      sceneCtrlRef.current?.shiftRunnerLane(1);
-                    } else {
-                      sceneCtrlRef.current?.setVirtualJoystick(1, 0);
-                    }
-                  }}
-                  onPointerUp={() =>
-                    sceneCtrlRef.current?.setVirtualJoystick(0, 0)
-                  }
-                  className="w-10 h-10 rounded-lg bg-slate-800 text-white font-bold text-xs flex items-center justify-center"
-                >
-                  ▶
-                </button>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => sceneCtrlRef.current?.triggerJumpOrAction()}
-                className="px-5 py-4 rounded-2xl bg-amber-500 text-slate-950 font-bold text-xs shadow-lg"
-              >
-                LOMPAT / AKSI
-              </button>
-            </div>
-
-            {/* Collapsible Bottom Control Dock (Cinema / Zen Mode Toggle) */}
-            <div className="pointer-events-auto flex flex-col items-center max-w-[min(1280px,97vw)] w-full">
-              <button
-                type="button"
-                onClick={() => setDockCollapsed((c) => !c)}
-                className="px-3.5 py-1 rounded-t-lg bg-slate-950/90 border border-b-0 border-slate-800 text-xs font-semibold text-slate-300 hover:text-white cursor-pointer"
-              >
-                {dockCollapsed
-                  ? '▴ Tampilkan Dock 20 Mode Utama [H]'
-                  : '▾ Sembunyikan Kontrol [H]'}
-              </button>
-
-              {!dockCollapsed && (
-                <div className="w-full p-2 rounded-2xl bg-slate-950/92 border border-slate-800 shadow-2xl flex flex-wrap items-center justify-between gap-1.5">
-                  {/* Quick Switcher for All 20 Core Playable 3D Modes */}
-                  <div className="flex flex-wrap items-center gap-1">
-                    {MINI_GAME_REGISTRY.map((slot) => {
-                      const isCurrent = activeSlot.engineId === slot.engineId;
-                      return (
-                        <button
-                          key={slot.id}
-                          type="button"
-                          onClick={() => handleSwitchMiniGameSlot(slot)}
-                          className={`px-2 py-1 rounded-lg text-[11px] font-bold transition-colors cursor-pointer whitespace-nowrap ${
-                            isCurrent
-                              ? 'bg-amber-500 text-slate-950'
-                              : 'bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-800'
-                          }`}
-                        >
-                          {slot.slot}. {slot.title}
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  {/* Quick Hub Quiz Action when in Jelajah Dunia */}
-                  {activeSlot.engineId === 'jelajah_dunia' && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setHubQuizModal({
-                          open: true,
-                          title: `Kuis Cepat ${activeBiomeObj.name}`,
-                          subject: 'Semua'
-                        })
-                      }
-                      className="px-3 py-1 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs cursor-pointer whitespace-nowrap"
-                    >
-                      Ujian Cepat Gedung Mapel
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
+          {/* GHOST DUAL-ZONE TOUCH GAMEPAD (Hidden on Desktop by default) */}
+          <DualZoneTouchGamepad
+            isRunnerMode={activeSlot.engineId === 'lari_kilat'}
+            touchControlMode={touchControlMode}
+            onMoveVector={(x, z) =>
+              sceneCtrlRef.current?.setVirtualJoystick(x, z)
+            }
+            onShiftLane={(dir) =>
+              sceneCtrlRef.current?.shiftRunnerLane(dir)
+            }
+            onJump={() => sceneCtrlRef.current?.triggerJumpOrAction()}
+            onInteract={() => sceneCtrlRef.current?.triggerInteractAction()}
+          />
         </div>
+      )}
+
+      {/* HIDDEN SLIDE-OVER MENU DRAWER */}
+      <QuickGameDrawer
+        open={quickDrawerOpen}
+        onClose={() => setQuickDrawerOpen(false)}
+        slots={MINI_GAME_REGISTRY}
+        activeEngineId={activeSlot.engineId}
+        highScores={profile.highScores}
+        currentBiome={currentBiome}
+        isMuted={isMuted}
+        currentZoom={cameraZoom}
+        touchControlMode={touchControlMode}
+        onChangeTouchControlMode={(m) => setTouchControlMode(m)}
+        onSelectSlot={(slot) => {
+          if (shellState === 'title') {
+            handleStartGame();
+          }
+          handleSwitchMiniGameSlot(slot);
+          setActiveBottomTab('minigames');
+        }}
+        onSelectBiome={(b) => {
+          setCurrentBiome(b);
+          sceneCtrlRef.current?.setBiome(b);
+        }}
+        onOpenWardrobe={() => setOpenModal('wardrobe')}
+        onOpenMateri={() => setOpenModal('materi')}
+        onOpenTeacher={() => setOpenModal('teacher')}
+        onOpenScorecard={() => setOpenModal('scorecard')}
+        onGoHome={handleGoHome}
+        onRestartGame={handleRestartGame}
+        onToggleMute={() => {
+          const m = soundManager.toggleMute();
+          setIsMuted(m);
+        }}
+        onToggleFullscreen={handleToggleFullscreen}
+        onZoomIn={handleZoomIn}
+        onZoomOut={handleZoomOut}
+        onResetZoom={handleResetZoom}
+      />
+
+      {/* HELP & CONTROLS GUIDE MODAL (?) */}
+      <HelpGuideModal
+        open={showHelpModal}
+        onClose={() => setShowHelpModal(false)}
+        activeGameTitle={activeSlot.title}
+      />
+
+      {/* COMPACT MISSION TRANSITION CARD */}
+      {briefingSlot && (
+        <MissionBriefingCard
+          slot={briefingSlot}
+          highScore={profile.highScores[briefingSlot.engineId] || 0}
+          onDismiss={() => {
+            if (briefingTimerRef.current !== null) {
+              window.clearTimeout(briefingTimerRef.current);
+              briefingTimerRef.current = null;
+            }
+            setBriefingSlot(null);
+          }}
+        />
       )}
 
       {/* PAUSE MODAL */}
       {shellState === 'paused' && (
         <div
           role="dialog"
-          aria-label="Permainan Dijeda"
-          className="fixed inset-0 z-40 flex items-center justify-center p-4 bg-slate-950/85 pointer-events-auto"
+          aria-label="Jeda"
+          className="fixed inset-0 z-40 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs pointer-events-auto"
         >
-          <div className="w-full max-w-md rounded-2xl bg-slate-900 border border-slate-700 p-6 shadow-2xl text-center space-y-4">
-            <h2 className="text-2xl font-bold text-white font-display">
-              Permainan Dijeda
+          <div className="w-full max-w-xs rounded-2xl glass-modal p-6 text-center space-y-4">
+            <h2 className="text-lg font-semibold text-zinc-100 font-display">
+              {activeSlot.title}
             </h2>
-            <p className="text-xs text-slate-300">
-              Mode Aktif: {activeSlot.title} · Dunia: {activeBiomeObj.name}
-            </p>
-            <div className="grid grid-cols-2 gap-3 p-3 rounded-xl bg-slate-950 border border-slate-800 font-mono-num">
-              <div>
-                <div className="text-xs text-slate-400">Skor Sesi</div>
-                <div className="text-lg font-bold text-amber-400">
-                  {sessionScore}
-                </div>
-              </div>
-              <div>
-                <div className="text-xs text-slate-400">Total Koin</div>
-                <div className="text-lg font-bold text-emerald-400">
-                  {profile.coins}
-                </div>
-              </div>
+            <div className="flex items-center justify-center gap-4 text-xs font-mono-num text-zinc-300">
+              <span>★ {sessionScore}</span>
+              <span className="text-zinc-700">·</span>
+              <span className="text-amber-400">🪙 {profile.coins}</span>
             </div>
             <div className="flex flex-col gap-2">
               <button
                 type="button"
                 onClick={() => setShellState('playing')}
-                className="w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-sm cursor-pointer"
+                className="w-full py-2.5 rounded-xl bg-zinc-100 hover:bg-white text-zinc-950 font-semibold text-xs cursor-pointer"
               >
-                Lanjutkan Main [P / Esc]
+                Lanjut
               </button>
               <button
                 type="button"
                 onClick={() => handleSwitchMiniGameSlot(activeSlot)}
-                className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-semibold text-sm cursor-pointer"
+                className="w-full py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border border-white/8 font-medium text-xs cursor-pointer"
               >
-                Ulangi Mode Ini
+                Ulangi
               </button>
               <button
                 type="button"
                 onClick={() => setShellState('title')}
-                className="w-full py-2.5 rounded-xl bg-slate-950 hover:bg-slate-800 text-slate-300 border border-slate-800 font-semibold text-sm cursor-pointer"
+                className="w-full py-2.5 rounded-xl bg-zinc-950 hover:bg-zinc-900 text-zinc-400 border border-white/5 font-medium text-xs cursor-pointer"
               >
-                Kembali ke Layar Judul
+                Beranda
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* VICTORY / GAME OVER MODAL WITH 3D CANVAS CERTIFICATE & WA SHARE */}
+      {/* VICTORY / GAME OVER MODAL */}
       {shellState === 'gameover' && outcomeSnapshot && (
         <div
           role="dialog"
           aria-label={outcomeSnapshot.title}
-          className="fixed inset-0 z-40 flex items-center justify-center p-4 bg-slate-950/90 pointer-events-auto overflow-y-auto"
+          className="fixed inset-0 z-40 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs pointer-events-auto overflow-y-auto"
         >
-          <div className="w-full max-w-2xl rounded-2xl bg-slate-900 border border-amber-500/70 p-5 sm:p-6 shadow-2xl text-center space-y-4 my-auto">
-            <div className="text-xs font-bold tracking-wider text-amber-400 uppercase">
-              {outcomeSnapshot.type === 'victory'
-                ? 'MISI BERHASIL DITAKLUKKAN · KARTU HASIL BELAJAR 3D'
-                : 'MISI BELUM TUNTAS · KARTU HASIL BELAJAR 3D'}
-            </div>
-            <h2 className="text-2xl font-bold text-white font-display">
+          <div className="w-full max-w-xl rounded-2xl glass-modal p-5 sm:p-6 text-center space-y-4 my-auto">
+            <h2 className="text-xl font-semibold text-zinc-100 font-display">
               {outcomeSnapshot.title}
             </h2>
-            <p className="text-xs text-slate-300 leading-relaxed">
-              {outcomeSnapshot.subtitle}
-            </p>
 
-            {/* Canvas-to-Image Kartu Hasil Belajar & Share WA */}
             <ScoreCardCertificate
               studentName={profile.name}
               level={profile.level}
@@ -2199,24 +2360,24 @@ export default function App() {
               status={outcomeSnapshot.type}
             />
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+            <div className="grid grid-cols-2 gap-2 pt-1">
               <button
                 type="button"
                 data-start="true"
                 onClick={() => handleSwitchMiniGameSlot(activeSlot)}
-                className="w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-sm cursor-pointer"
+                className="w-full py-2.5 rounded-xl bg-zinc-100 hover:bg-white text-zinc-950 font-semibold text-xs cursor-pointer"
               >
-                Main Lagi Sekarang
+                Ulangi
               </button>
               <button
                 type="button"
                 onClick={() => {
                   setShellState('playing');
-                  setOpenModal('minigames');
+                  setQuickDrawerOpen(true);
                 }}
-                className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-semibold text-sm cursor-pointer"
+                className="w-full py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border border-white/8 font-medium text-xs cursor-pointer"
               >
-                Pilih Mini-Game Lain
+                20 Games
               </button>
             </div>
           </div>
@@ -2236,10 +2397,23 @@ export default function App() {
       {openModal === 'wardrobe' && (
         <WardrobeModal
           profile={profile}
+          totalStars={totalStarsEarned}
+          currentZoom={cameraZoom}
+          onZoomIn={handleZoomIn}
+          onZoomOut={handleZoomOut}
+          onResetZoom={handleResetZoom}
           onSelectUniform={handleSelectUniform}
           onToggleAccessory={handleToggleAccessory}
+          onSelectAura={handleSelectAura}
+          onSelectPet={handleSelectPet}
+          onSelectPropWeapon={handleSelectPropWeapon}
+          onSelectThemeColor={handleSelectThemeColor}
+          onPreviewLoadout={handlePreviewShopLoadout}
           onUpdateName={(name) => setProfile((p) => ({ ...p, name }))}
-          onClose={() => setOpenModal(null)}
+          onClose={() => {
+            syncLoadoutToCanvas(profile);
+            setOpenModal(null);
+          }}
         />
       )}
 
@@ -2264,25 +2438,20 @@ export default function App() {
       {openModal === 'scorecard' && (
         <div
           role="dialog"
-          aria-label="Kartu Hasil Belajar 3D"
-          className="fixed inset-0 z-40 flex items-center justify-center p-4 bg-slate-950/90 pointer-events-auto overflow-y-auto"
+          aria-label="Sertifikat"
+          className="fixed inset-0 z-40 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs pointer-events-auto overflow-y-auto"
         >
-          <div className="w-full max-w-2xl rounded-2xl bg-slate-900 border border-amber-500/70 p-5 sm:p-6 shadow-2xl space-y-4 my-auto">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <div>
-                <div className="text-xs font-bold uppercase tracking-wider text-amber-400">
-                  SERTIFIKAT & REKAP SKOR WHATSAPP
-                </div>
-                <h2 className="text-xl font-bold text-white font-display">
-                  Kartu Hasil Belajar 3D ({activeSlot.title})
-                </h2>
-              </div>
+          <div className="w-full max-w-xl rounded-2xl glass-modal p-5 space-y-4 my-auto">
+            <div className="flex items-center justify-between border-b border-white/8 pb-3">
+              <h2 className="text-base font-semibold text-zinc-100 font-display">
+                {activeSlot.title}
+              </h2>
               <button
                 type="button"
                 onClick={() => setOpenModal(null)}
-                className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold cursor-pointer"
+                className="w-7 h-7 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-400 text-xs cursor-pointer"
               >
-                Tutup [Esc]
+                ✕
               </button>
             </div>
 

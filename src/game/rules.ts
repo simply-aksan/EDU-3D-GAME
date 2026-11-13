@@ -18,6 +18,14 @@ export function createDefaultProfile(): PlayerProfile {
     unlockedUniforms: ['sd'],
     accessories: ['topi_sekolah', 'tas_ransel'],
     unlockedAccessories: ['topi_sekolah', 'tas_ransel'],
+    aura: 'none',
+    unlockedAuras: ['none'],
+    pet: 'none',
+    unlockedPets: ['none'],
+    propWeapon: 'none',
+    unlockedProps: ['none'],
+    themeColor: 'klasik',
+    unlockedThemes: ['klasik'],
     collectedBooks: [],
     highScores: {
       jelajah_dunia: 0,
@@ -59,16 +67,62 @@ export function calculateAnswerReward(
   streak: number,
   baseCoins = 25,
   baseXp = 30
-): { coinsDelta: number; xpDelta: number; nextStreak: number } {
+): {
+  coinsDelta: number;
+  xpDelta: number;
+  nextStreak: number;
+  multiplier: 1 | 2 | 3 | 5;
+  isFever: boolean;
+  comboLabel: string;
+} {
   if (!isCorrect) {
-    return { coinsDelta: 0, xpDelta: 5, nextStreak: 0 };
+    return {
+      coinsDelta: 0,
+      xpDelta: 5,
+      nextStreak: 0,
+      multiplier: 1,
+      isFever: false,
+      comboLabel: '1x'
+    };
   }
   const nextStreak = streak + 1;
-  const comboMultiplier = Math.min(2.5, 1 + (nextStreak - 1) * 0.25);
+  if (nextStreak >= 5) {
+    return {
+      coinsDelta: Math.round(baseCoins * 3),
+      xpDelta: Math.round(baseXp * 5),
+      nextStreak,
+      multiplier: 5,
+      isFever: true,
+      comboLabel: '5x FEVER MODE!'
+    };
+  }
+  if (nextStreak >= 3) {
+    return {
+      coinsDelta: Math.round(baseCoins * 2),
+      xpDelta: Math.round(baseXp * 2),
+      nextStreak,
+      multiplier: 3,
+      isFever: true,
+      comboLabel: '3x FEVER MODE!'
+    };
+  }
+  if (nextStreak === 2) {
+    return {
+      coinsDelta: Math.round(baseCoins * 1.5),
+      xpDelta: Math.round(baseXp * 1.5),
+      nextStreak,
+      multiplier: 2,
+      isFever: false,
+      comboLabel: '2x COMBO!'
+    };
+  }
   return {
-    coinsDelta: Math.round(baseCoins * comboMultiplier),
-    xpDelta: Math.round(baseXp * comboMultiplier),
-    nextStreak
+    coinsDelta: baseCoins,
+    xpDelta: baseXp,
+    nextStreak,
+    multiplier: 1,
+    isFever: false,
+    comboLabel: '1x'
   };
 }
 
@@ -313,7 +367,7 @@ export function generateGeminiTeacherPrompt(params: {
   const cleanTopic =
     params.topic.trim() || `Materi Inti ${params.subject} ${params.grade}`;
 
-  return `Kamu adalah Guru Ahli Kurikulum Nasional Indonesia. Buatkan tepat ${count} soal pilihan ganda berkualitas tinggi beserta ringkasan materi untuk aplikasi game edukasi "EDUVERSE 3D".
+  return `Kamu adalah Guru Ahli Kurikulum Nasional Indonesia. Buatkan tepat ${count} soal pilihan ganda berkualitas tinggi beserta ringkasan materi untuk aplikasi game edukasi "EDUZONE".
 
 SPESIFIKASI PAKET SOAL:
 - Judul Paket: "${params.title}"
@@ -376,12 +430,12 @@ export function formatWhatsAppScoreReport(params: {
     params.status === 'victory' ? 'LULUS / MISI TUNTAS' : 'SELESAI BERLATIH';
 
   const message = [
-    `*LAPORAN HASIL BELAJAR EDUVERSE 3D*`,
+    `*LAPORAN HASIL BELAJAR EDUZONE*`,
     `----------------------------------`,
     `Nama Murid : *${cleanName}* (Level ${params.level})`,
     `Paket Soal : ${params.packTitle}`,
     `Mapel / Kelas : ${params.subject} (${params.grade})`,
-    `Mini-Game 3D : ${params.gameTitle}`,
+    `Mini-Game : ${params.gameTitle}`,
     `Skor Akhir : *${params.score} Poin* (Rekor: ${params.bestScore})`,
     `Status Misi : *${statusLabel}*`,
     `Kode Verifikasi : \`${verificationCode}\``

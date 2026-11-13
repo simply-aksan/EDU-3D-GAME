@@ -2,27 +2,44 @@ import React, { useState } from 'react';
 import {
   ACCESSORY_ITEMS,
   AccessoryId,
+  AURA_ITEMS,
+  AuraId,
   BIOMES,
   BiomeId,
   CostumeUniformId,
   DEFAULT_QUESTION_PACK,
   MINI_GAME_REGISTRY,
   MiniGameSlot,
+  PET_ITEMS,
+  PetId,
   PlayerProfile,
+  PROP_WEAPON_ITEMS,
+  PropWeaponId,
   QuestionItem,
   QuestionPack,
   SCHOOL_GRADE_OPTIONS,
   SUBJECT_PRESET_OPTIONS,
+  THEME_COLOR_ITEMS,
+  ThemeColorId,
   UNIFORM_ITEMS
 } from '../game/questions';
 import {
   encodeQuestionPackToHash,
   extractYoutubeVideoId,
   generateGeminiTeacherPrompt,
+  getXpProgressInLevel,
   validateQuestionPackJson
 } from '../game/rules';
+import {
+  computeStarRating,
+  getMiniGameControlBriefing,
+  uiManager
+} from '../game/UIManager';
+import { getMiniGameVisualSpec } from './ErgonomicHudWidgets';
 
-// 1. 20 MINI-GAMES LAUNCHER MODAL
+// ============================================================================
+// 1. 20 MINI-GAMES LAUNCHER MODAL (WITH VISUAL GAME PREVIEW CARDS & MODELS)
+// ============================================================================
 interface MiniGamesModalProps {
   activeSlotId: string;
   highScores: Record<string, number>;
@@ -42,98 +59,158 @@ export const MiniGamesModal: React.FC<MiniGamesModalProps> = ({
       ? MINI_GAME_REGISTRY.filter((s) => s.isFeaturedSix)
       : MINI_GAME_REGISTRY;
 
+  const totalStars = MINI_GAME_REGISTRY.reduce((acc, s) => {
+    const spec = getMiniGameControlBriefing(s.engineId);
+    const info = computeStarRating(
+      highScores[s.engineId] || 0,
+      spec.threeStarScore
+    );
+    return acc + info.stars;
+  }, 0);
+
   return (
     <div
       role="dialog"
       aria-label="Daftar 20 Mini-Games Edukasi"
-      className="fixed inset-0 z-40 flex items-center justify-center p-4 bg-slate-950/85 pointer-events-auto"
+      className="fixed inset-0 z-40 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs pointer-events-auto"
     >
-      <div className="w-full max-w-5xl max-h-[88vh] flex flex-col rounded-2xl bg-slate-900 border border-slate-700 shadow-2xl overflow-hidden">
-        <div className="flex flex-wrap items-center justify-between gap-4 px-6 py-4 border-b border-slate-800">
+      <div className="w-full max-w-6xl max-h-[88vh] flex flex-col rounded-2xl glass-modal overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-4 px-6 py-4 border-b border-white/10 bg-zinc-950/70">
           <div>
-            <h2 className="text-xl font-bold text-white font-display">
-              20 Mini-Games Edukasi (Universal Question Engine)
+            <h2 className="text-lg font-semibold text-zinc-100 font-display tracking-tight">
+              20 Mini-Games Interaktif (Panduan Visual & Model 2D)
             </h2>
-            <p className="text-xs text-slate-400 mt-0.5">
-              Seluruh 20 Mode Utama 3D Interaktif berstatus AKTIF & SIAP DIMAINKAN dengan paket soal aktif
+            <p className="text-xs text-zinc-400 mt-0.5 font-mono-num">
+              Total Bintang: <span className="text-amber-400 font-semibold">{totalStars} / 60 ★</span> · Waktu Menjawab: <span className="text-emerald-400">60 Detik / Soal</span>
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1 p-1 bg-slate-950 rounded-lg border border-slate-800">
+            <div className="flex items-center gap-1 p-1 bg-zinc-900 rounded-xl border border-white/8">
               <button
                 type="button"
-                onClick={() => setFilter('all')}
-                className={`px-3 py-1.5 text-xs font-semibold rounded-md cursor-pointer whitespace-nowrap ${
+                onClick={() => {
+                  uiManager.triggerTactileClick();
+                  setFilter('all');
+                }}
+                className={`px-3 py-1.5 text-xs font-medium rounded-lg cursor-pointer whitespace-nowrap transition-colors ${
                   filter === 'all'
-                    ? 'bg-amber-500 text-slate-950'
-                    : 'text-slate-300 hover:text-white'
+                    ? 'bg-zinc-100 text-zinc-950'
+                    : 'text-zinc-400 hover:text-white'
                 }`}
               >
                 Semua 20 Game
               </button>
               <button
                 type="button"
-                onClick={() => setFilter('featured')}
-                className={`px-3 py-1.5 text-xs font-semibold rounded-md cursor-pointer whitespace-nowrap ${
+                onClick={() => {
+                  uiManager.triggerTactileClick();
+                  setFilter('featured');
+                }}
+                className={`px-3 py-1.5 text-xs font-medium rounded-lg cursor-pointer whitespace-nowrap transition-colors ${
                   filter === 'featured'
-                    ? 'bg-amber-500 text-slate-950'
-                    : 'text-slate-300 hover:text-white'
+                    ? 'bg-zinc-100 text-zinc-950'
+                    : 'text-zinc-400 hover:text-white'
                 }`}
               >
-                20 Mode Utama Aktif
+                Unggulan
               </button>
             </div>
             <button
               type="button"
-              onClick={onClose}
+              onClick={() => {
+                uiManager.triggerTactileClick();
+                onClose();
+              }}
               aria-label="Tutup Daftar Mini-Games"
-              className="px-3.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold cursor-pointer"
+              className="px-3.5 py-1.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-white/10 text-zinc-200 text-xs font-medium cursor-pointer btn-tactile whitespace-nowrap"
             >
-              Tutup [Esc]
+              Tutup
             </button>
           </div>
         </div>
 
-        <div className="p-6 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+        <div className="p-5 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           {slots.map((slot) => {
             const isActive = slot.id === activeSlotId;
             const best = highScores[slot.engineId] || 0;
+            const briefing = getMiniGameControlBriefing(slot.engineId);
+            const visual = getMiniGameVisualSpec(slot.engineId);
+            const starInfo = computeStarRating(best, briefing.threeStarScore);
+
             return (
               <div
                 key={slot.id}
-                className={`flex flex-col justify-between p-4 rounded-xl border transition-colors ${
+                className={`bento-tile flex flex-col justify-between p-4 rounded-2xl ${
                   isActive
-                    ? 'bg-slate-800/95 border-amber-400'
-                    : 'bg-slate-950/90 border-slate-800 hover:border-slate-600'
+                    ? 'border-emerald-400/70 bg-zinc-900/95 ring-1 ring-emerald-400/40'
+                    : ''
                 }`}
               >
                 <div>
-                  <div className="flex items-center justify-between text-xs text-slate-400 mb-1.5 font-mono-num">
+                  <div className="flex items-center justify-between text-xs text-zinc-400 mb-2 font-mono-num">
                     <span>
                       #{String(slot.slot).padStart(2, '0')} · {slot.category}
                     </span>
-                    <span className="text-emerald-400 font-bold">
-                      AKTIF & SIAP
+                    <span
+                      className="flex items-center gap-0.5 text-xs"
+                      aria-label={`${starInfo.stars} dari 3 Bintang`}
+                    >
+                      {[1, 2, 3].map((idx) => (
+                        <span
+                          key={idx}
+                          className={
+                            idx <= starInfo.stars
+                              ? 'text-amber-400'
+                              : 'text-zinc-700'
+                          }
+                        >
+                          ★
+                        </span>
+                      ))}
                     </span>
                   </div>
-                  <h3 className="text-base font-bold text-white font-display">
+
+                  {/* Visual Scene & 2D Model Preview Banner */}
+                  <div className="p-2.5 rounded-xl bg-zinc-950/90 border border-white/6 flex items-center gap-2.5 mb-2.5">
+                    <div className="w-10 h-10 rounded-lg bg-zinc-900 flex items-center justify-center text-xl shrink-0">
+                      {visual.icon}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-[11px] font-semibold text-emerald-400 truncate">
+                        {visual.modelLabel}
+                      </div>
+                      <div className="text-[10px] text-zinc-400 font-mono-num truncate">
+                        🎯 {visual.targetHint}
+                      </div>
+                    </div>
+                  </div>
+
+                  <h3 className="text-sm font-semibold text-zinc-100 font-display leading-snug">
                     {slot.title}
                   </h3>
-                  <p className="text-xs text-slate-300 mt-1.5 leading-relaxed">
-                    {slot.description}
+                  <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
+                    {visual.howToPlay}
                   </p>
                 </div>
 
-                <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between gap-2">
-                  <span className="text-xs text-slate-400 font-mono-num">
-                    Skor: {best}
-                  </span>
+                <div className="mt-3 pt-2.5 border-t border-white/8">
+                  <div className="flex items-center justify-between text-[11px] text-zinc-400 font-mono-num mb-2">
+                    <span>Skor: {best}</span>
+                    <span>3★: {briefing.threeStarScore}</span>
+                  </div>
                   <button
                     type="button"
-                    onClick={() => onSelectSlot(slot)}
-                    className="px-3.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs cursor-pointer whitespace-nowrap"
+                    onClick={() => {
+                      uiManager.triggerTactileClick(25);
+                      onSelectSlot(slot);
+                    }}
+                    className={`w-full py-2 rounded-xl font-semibold text-xs cursor-pointer whitespace-nowrap ${
+                      isActive
+                        ? 'bg-emerald-400 text-zinc-950'
+                        : 'bg-zinc-100 hover:bg-white text-zinc-950'
+                    }`}
                   >
-                    {isActive ? 'Sedang Aktif' : 'Mainkan'}
+                    {isActive ? 'Sedang Aktif' : 'Mainkan Game'}
                   </button>
                 </div>
               </div>
@@ -145,189 +222,785 @@ export const MiniGamesModal: React.FC<MiniGamesModalProps> = ({
   );
 };
 
-// 2. LEMARI GAYA (3D WARDROBE MODAL)
+// ============================================================================
+// 2. SHOP KUSTOMISASI KARAKTER 5 KATEGORI + TRY-ON INTERAKTIF + ZOOM KAMERA
+// ============================================================================
+export interface ShopPreviewLoadout {
+  uniform: CostumeUniformId;
+  accessories: AccessoryId[];
+  aura: AuraId;
+  pet: PetId;
+  propWeapon: PropWeaponId;
+  themeColor: ThemeColorId;
+}
+
 interface WardrobeModalProps {
   profile: PlayerProfile;
+  totalStars?: number;
+  currentZoom?: number;
+  onZoomIn?: () => void;
+  onZoomOut?: () => void;
+  onResetZoom?: () => void;
   onSelectUniform: (id: CostumeUniformId) => void;
   onToggleAccessory: (id: AccessoryId) => void;
+  onSelectAura?: (id: AuraId) => void;
+  onSelectPet?: (id: PetId) => void;
+  onSelectPropWeapon?: (id: PropWeaponId) => void;
+  onSelectThemeColor?: (id: ThemeColorId) => void;
+  onPreviewLoadout?: (preview: ShopPreviewLoadout) => void;
   onUpdateName: (name: string) => void;
   onClose: () => void;
 }
 
+type ShopCategoryTab = 'uniform' | 'accessory' | 'aura' | 'pet' | 'prop';
+
 export const WardrobeModal: React.FC<WardrobeModalProps> = ({
   profile,
+  totalStars = 0,
+  currentZoom = 1,
+  onZoomIn,
+  onZoomOut,
+  onResetZoom,
   onSelectUniform,
   onToggleAccessory,
+  onSelectAura,
+  onSelectPet,
+  onSelectPropWeapon,
+  onSelectThemeColor,
+  onPreviewLoadout,
   onUpdateName,
   onClose
 }) => {
   const [nameInput, setNameInput] = useState(profile.name);
+  const [activeCategory, setActiveCategory] = useState<ShopCategoryTab>('uniform');
+  const [tryOnNotice, setTryOnNotice] = useState<string | null>(null);
+
+  // Interactive Try-On State (allows testing locked/unpurchased items on the live character)
+  const [previewState, setPreviewState] = useState<ShopPreviewLoadout>({
+    uniform: profile.uniform,
+    accessories: profile.accessories,
+    aura: profile.aura || 'none',
+    pet: profile.pet || 'none',
+    propWeapon: profile.propWeapon || 'none',
+    themeColor: profile.themeColor || 'klasik'
+  });
+
+  const xpProgress = getXpProgressInLevel(profile.xp);
+
+  const applyTryOnPreview = (patch: Partial<ShopPreviewLoadout>, label: string) => {
+    const next: ShopPreviewLoadout = {
+      ...previewState,
+      ...patch
+    };
+    setPreviewState(next);
+    setTryOnNotice(`Pratinjau Coba Pakai: ${label}`);
+    onPreviewLoadout?.(next);
+  };
+
+  const handleResetToOwnedLoadout = () => {
+    const owned: ShopPreviewLoadout = {
+      uniform: profile.uniform,
+      accessories: profile.accessories,
+      aura: profile.aura || 'none',
+      pet: profile.pet || 'none',
+      propWeapon: profile.propWeapon || 'none',
+      themeColor: profile.themeColor || 'klasik'
+    };
+    setPreviewState(owned);
+    setTryOnNotice(null);
+    onPreviewLoadout?.(owned);
+  };
+
+  const unlockedAuras: AuraId[] = profile.unlockedAuras || ['none'];
+  const unlockedPets: PetId[] = profile.unlockedPets || ['none'];
+  const unlockedProps: PropWeaponId[] = profile.unlockedProps || ['none'];
+  const unlockedThemes: ThemeColorId[] = profile.unlockedThemes || ['klasik'];
+
+  const formatReqBadge = (cost: number, minLevel?: number, minStars?: number) => {
+    const parts: string[] = [];
+    parts.push(cost === 0 ? 'Gratis' : `🪙 ${cost}`);
+    if (minLevel) parts.push(`★Lv.${minLevel}`);
+    if (minStars) parts.push(`${minStars}★`);
+    return parts.join(' · ');
+  };
 
   return (
     <div
       role="dialog"
-      aria-label="Lemari Gaya Kustomisasi Karakter 3D"
-      className="fixed inset-0 z-40 flex items-center justify-center p-4 bg-slate-950/85 pointer-events-auto"
+      aria-label="Shop Kustomisasi Karakter"
+      className="fixed inset-0 z-40 flex flex-col lg:flex-row items-stretch justify-end p-3 sm:p-5 wardrobe-dof-vignette pointer-events-none"
     >
-      <div className="w-full max-w-3xl max-h-[88vh] flex flex-col rounded-2xl bg-slate-900 border border-slate-700 shadow-2xl overflow-hidden">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800">
-          <div>
-            <h2 className="text-xl font-bold text-white font-display">
-              Lemari Gaya & Profil Pelajar 3D
-            </h2>
-            <p className="text-xs text-slate-400 mt-0.5 font-mono-num">
-              Saldo Koin Kamu: {profile.coins} Koin · Level {profile.level}
-            </p>
+      {/* Left Interactive Character Preview Viewport + Camera Zoom Controls */}
+      <div className="flex-1 flex flex-col justify-between p-2 sm:p-4 pointer-events-none min-h-[140px]">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl glass-hud text-xs font-mono-num text-zinc-200 pointer-events-auto">
+            <span className="w-2 h-2 rounded-full bg-emerald-400" />
+            <span>PRATINJAU KARAKTER LANGSUNG</span>
           </div>
+
+          {/* Interactive Camera Zoom Controls inside Shop */}
+          <div className="inline-flex items-center gap-1 p-1 rounded-xl glass-hud font-mono-num text-xs text-zinc-200 pointer-events-auto">
+            <button
+              type="button"
+              onClick={() => {
+                uiManager.triggerTactileClick(15);
+                onZoomOut?.();
+              }}
+              aria-label="Perkecil Pratinjau"
+              className="w-7 h-7 rounded-lg bg-zinc-900 hover:bg-zinc-800 flex items-center justify-center cursor-pointer"
+            >
+              −
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                uiManager.triggerTactileClick(15);
+                onResetZoom?.();
+              }}
+              className="px-2 h-7 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-[11px] cursor-pointer"
+            >
+              Zoom {Math.round(currentZoom * 100)}%
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                uiManager.triggerTactileClick(15);
+                onZoomIn?.();
+              }}
+              aria-label="Perbesar Pratinjau"
+              className="w-7 h-7 rounded-lg bg-zinc-900 hover:bg-zinc-800 flex items-center justify-center cursor-pointer"
+            >
+              +
+            </button>
+          </div>
+        </div>
+
+        {/* Try-On Status Pill at Bottom of Character Viewport */}
+        <div className="flex flex-wrap items-center gap-2">
+          {tryOnNotice ? (
+            <div className="inline-flex items-center gap-2.5 px-3.5 py-2 rounded-xl glass-hud text-xs text-emerald-300 pointer-events-auto">
+              <span>👁 {tryOnNotice}</span>
+              <button
+                type="button"
+                onClick={handleResetToOwnedLoadout}
+                className="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[11px] cursor-pointer"
+              >
+                Reset
+              </button>
+            </div>
+          ) : (
+            <div className="hidden sm:inline-flex items-center gap-2 px-3 py-1.5 rounded-xl glass-hud text-[11px] text-zinc-400">
+              <span>Klik &quot;Coba Pakai&quot; pada item mana saja untuk melihat tampilannya di karakter sebelum membeli</span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Right 5-Category Shop Studio Panel */}
+      <div className="w-full lg:max-w-2xl max-h-[86vh] flex flex-col rounded-2xl glass-modal overflow-hidden pointer-events-auto my-auto">
+        {/* Header Bar with Economy Badges */}
+        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5 border-b border-white/10 bg-zinc-950/80">
+          <div>
+            <h2 className="text-base sm:text-lg font-semibold text-zinc-100 font-display">
+              Shop Kustomisasi Karakter
+            </h2>
+            <div className="flex items-center gap-3 text-xs font-mono-num mt-0.5">
+              <span className="text-amber-400 font-semibold">🪙 {profile.coins} Koin</span>
+              <span className="text-zinc-600">·</span>
+              <span className="text-zinc-300">★ Lv.{profile.level}</span>
+              <span className="text-zinc-600">·</span>
+              <span className="text-emerald-400">{totalStars} ★ Bintang</span>
+            </div>
+          </div>
+
           <button
             type="button"
-            onClick={onClose}
-            className="px-3.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold cursor-pointer"
+            onClick={() => {
+              uiManager.triggerTactileClick();
+              handleResetToOwnedLoadout();
+              onClose();
+            }}
+            className="px-3.5 py-1.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-white/10 text-zinc-200 text-xs font-medium cursor-pointer btn-tactile"
           >
             Tutup
           </button>
         </div>
 
-        <div className="p-6 overflow-y-auto space-y-6">
-          {/* Player Name */}
-          <div className="flex flex-wrap items-end gap-3">
-            <div className="flex-1 min-w-[220px]">
-              <label
-                htmlFor="player-name-input"
-                className="block text-xs font-semibold text-slate-300 mb-1.5"
-              >
-                Nama Pelajar
-              </label>
+        {/* 5 Category Tabs */}
+        <div className="px-5 py-2.5 bg-zinc-950/60 border-b border-white/8 grid grid-cols-5 gap-1">
+          {(
+            [
+              { id: 'uniform', label: 'Kostum', icon: '👕' },
+              { id: 'accessory', label: 'Topi/Kaca', icon: '👑' },
+              { id: 'aura', label: 'Aura', icon: '✨' },
+              { id: 'pet', label: 'Pet/Drone', icon: '🐾' },
+              { id: 'prop', label: 'Alat/Warna', icon: '⚔️' }
+            ] as { id: ShopCategoryTab; label: string; icon: string }[]
+          ).map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => {
+                uiManager.triggerTactileClick(15);
+                setActiveCategory(tab.id);
+              }}
+              className={`py-2 px-1.5 rounded-xl text-xs font-medium flex flex-col sm:flex-row items-center justify-center gap-1 transition-colors cursor-pointer ${
+                activeCategory === tab.id
+                  ? 'bg-zinc-100 text-zinc-950 font-semibold'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/70'
+              }`}
+            >
+              <span>{tab.icon}</span>
+              <span className="truncate text-[11px] sm:text-xs">{tab.label}</span>
+            </button>
+          ))}
+        </div>
+
+        {/* Scrollable Shop Content */}
+        <div className="p-5 overflow-y-auto space-y-4 flex-1">
+          {/* Compact Player Identity Bar */}
+          <div className="p-3 rounded-xl bg-zinc-900/65 border border-white/6 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2 flex-1 min-w-[200px]">
               <input
                 id="player-name-input"
                 type="text"
                 value={nameInput}
                 onChange={(e) => setNameInput(e.target.value)}
-                className="w-full px-3.5 py-2 rounded-lg bg-slate-950 border border-slate-700 text-sm text-white"
+                aria-label="Identitas Pelajar Nusantara"
+                className="flex-1 px-3 py-1.5 rounded-lg bg-zinc-950 border border-white/10 text-xs text-zinc-100"
               />
+              <button
+                type="button"
+                onClick={() => {
+                  uiManager.triggerTactileClick();
+                  if (nameInput.trim()) onUpdateName(nameInput.trim());
+                }}
+                className="px-3 py-1.5 rounded-lg bg-zinc-100 hover:bg-white text-zinc-950 font-semibold text-xs cursor-pointer whitespace-nowrap"
+              >
+                Simpan Nama
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={() => {
-                if (nameInput.trim()) onUpdateName(nameInput.trim());
-              }}
-              className="px-4 py-2 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs cursor-pointer whitespace-nowrap"
-            >
-              Simpan Nama
-            </button>
+            <div className="text-[11px] font-mono-num text-zinc-400">
+              XP {profile.xp} ({xpProgress}% ke Lv.{profile.level + 1})
+            </div>
           </div>
 
-          {/* 3D Uniforms */}
-          <div>
-            <h3 className="text-sm font-bold text-slate-200 mb-3">
-              Pilih Seragam & Busana 3D
-            </h3>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {/* TAB 1: KOSTUM & SERAGAM KARAKTER */}
+          {activeCategory === 'uniform' && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               {UNIFORM_ITEMS.map((item) => {
                 const unlocked = profile.unlockedUniforms.includes(item.id);
-                const active = profile.uniform === item.id;
-                const canAfford = profile.coins >= item.cost;
+                const equipped = profile.uniform === item.id;
+                const isPreviewing = previewState.uniform === item.id;
+                const meetsLevel = !item.minLevel || profile.level >= item.minLevel;
+                const meetsStars = !item.minStars || totalStars >= item.minStars;
+                const meetsReq = meetsLevel && meetsStars;
+                const canAfford = profile.coins >= item.cost && meetsReq;
+
                 return (
                   <div
                     key={item.id}
-                    className={`p-3.5 rounded-xl border flex flex-col justify-between ${
-                      active
-                        ? 'bg-slate-800 border-amber-400'
-                        : 'bg-slate-950 border-slate-800'
+                    className={`p-3.5 rounded-xl border flex flex-col justify-between transition-colors ${
+                      equipped
+                        ? 'bg-zinc-900/95 border-emerald-400/60'
+                        : isPreviewing
+                        ? 'bg-zinc-900/80 border-zinc-400'
+                        : 'bg-zinc-900/50 border-white/6'
                     }`}
                   >
-                    <div>
-                      <div className="text-xs text-slate-400 font-mono-num">
-                        {unlocked ? 'Tersedia' : item.badgeLabel}
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="text-sm font-semibold text-zinc-100">
+                          {item.name}
+                        </div>
+                        <div className="text-[11px] font-mono-num text-zinc-400 mt-0.5">
+                          {unlocked ? '✓ Sudah Dimiliki' : item.badgeLabel}
+                        </div>
                       </div>
-                      <div className="text-sm font-bold text-white mt-0.5">
-                        {item.name}
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          uiManager.triggerTactileClick(15);
+                          applyTryOnPreview({ uniform: item.id }, item.name);
+                        }}
+                        className="px-2 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-[11px] text-zinc-200 cursor-pointer shrink-0"
+                      >
+                        👁 Coba Pakai
+                      </button>
                     </div>
+
                     <button
                       type="button"
                       disabled={!unlocked && !canAfford}
-                      onClick={() => onSelectUniform(item.id)}
-                      className={`mt-3 w-full py-1.5 rounded-lg text-xs font-bold cursor-pointer ${
-                        active
-                          ? 'bg-emerald-500 text-slate-950'
+                      onClick={() => {
+                        uiManager.triggerTactileClick(25);
+                        onSelectUniform(item.id);
+                        applyTryOnPreview({ uniform: item.id }, item.name);
+                      }}
+                      className={`mt-3 w-full py-2 rounded-lg text-xs font-semibold cursor-pointer ${
+                        equipped
+                          ? 'bg-emerald-400 text-zinc-950'
                           : unlocked
-                          ? 'bg-slate-800 hover:bg-slate-700 text-white'
+                          ? 'bg-zinc-100 hover:bg-white text-zinc-950'
+                          : !meetsReq
+                          ? 'bg-zinc-950 text-zinc-500 border border-white/5 cursor-not-allowed'
                           : canAfford
-                          ? 'bg-amber-500 hover:bg-amber-400 text-slate-950'
-                          : 'bg-slate-900 text-slate-600 cursor-not-allowed'
+                          ? 'bg-amber-400 hover:bg-amber-300 text-zinc-950'
+                          : 'bg-zinc-950 text-zinc-500 cursor-not-allowed'
                       }`}
                     >
-                      {active
+                      {equipped
                         ? 'Dipakai'
                         : unlocked
                         ? 'Pakai Seragam'
-                        : `Beli (${item.cost} Koin)`}
+                        : !meetsLevel
+                        ? `Buka di Level ${item.minLevel}`
+                        : !meetsStars
+                        ? `Butuh ${item.minStars} ★ Bintang`
+                        : item.cost === 0
+                        ? 'Klaim Spesial (Gratis)'
+                        : `Beli 🪙 ${item.cost}`}
                     </button>
                   </div>
                 );
               })}
             </div>
-          </div>
+          )}
 
-          {/* 3D Accessories */}
-          <div>
-            <h3 className="text-sm font-bold text-slate-200 mb-3">
-              Aksesori 3D (Topi, Kacamata, Jubah, Tas)
-            </h3>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {/* TAB 2: TOPI, MAHKOTA, & KACAMATA */}
+          {activeCategory === 'accessory' && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               {ACCESSORY_ITEMS.map((acc) => {
                 const unlocked = profile.unlockedAccessories.includes(acc.id);
                 const equipped = profile.accessories.includes(acc.id);
-                const canAfford = profile.coins >= acc.cost;
+                const isPreviewing = previewState.accessories.includes(acc.id);
+                const meetsLevel = !acc.minLevel || profile.level >= acc.minLevel;
+                const meetsStars = !acc.minStars || totalStars >= acc.minStars;
+                const meetsReq = meetsLevel && meetsStars;
+                const canAfford = profile.coins >= acc.cost && meetsReq;
+
                 return (
                   <div
                     key={acc.id}
-                    className={`p-3.5 rounded-xl border flex flex-col justify-between ${
+                    className={`p-3.5 rounded-xl border flex flex-col justify-between transition-colors ${
                       equipped
-                        ? 'bg-slate-800 border-cyan-400'
-                        : 'bg-slate-950 border-slate-800'
+                        ? 'bg-zinc-900/95 border-emerald-400/60'
+                        : isPreviewing
+                        ? 'bg-zinc-900/80 border-zinc-400'
+                        : 'bg-zinc-900/50 border-white/6'
                     }`}
                   >
-                    <div>
-                      <div className="text-xs text-slate-400 font-mono-num">
-                        Slot: {acc.slot.toUpperCase()} ·{' '}
-                        {unlocked ? 'Milikmu' : acc.badgeLabel}
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="text-sm font-semibold text-zinc-100">
+                          {acc.name}
+                        </div>
+                        <div className="text-[11px] font-mono-num text-zinc-400 mt-0.5">
+                          Slot {acc.slot.toUpperCase()} · {unlocked ? '✓ Milikmu' : acc.badgeLabel}
+                        </div>
                       </div>
-                      <div className="text-sm font-bold text-white mt-0.5">
-                        {acc.name}
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          uiManager.triggerTactileClick(15);
+                          const nextAcc = previewState.accessories.includes(acc.id)
+                            ? previewState.accessories.filter((a) => a !== acc.id)
+                            : [...previewState.accessories, acc.id];
+                          applyTryOnPreview({ accessories: nextAcc }, acc.name);
+                        }}
+                        className="px-2 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-[11px] text-zinc-200 cursor-pointer shrink-0"
+                      >
+                        👁 Coba Pakai
+                      </button>
                     </div>
+
                     <button
                       type="button"
                       disabled={!unlocked && !canAfford}
-                      onClick={() => onToggleAccessory(acc.id)}
-                      className={`mt-3 w-full py-1.5 rounded-lg text-xs font-bold cursor-pointer ${
+                      onClick={() => {
+                        uiManager.triggerTactileClick(25);
+                        onToggleAccessory(acc.id);
+                      }}
+                      className={`mt-3 w-full py-2 rounded-lg text-xs font-semibold cursor-pointer ${
                         equipped
-                          ? 'bg-cyan-400 text-slate-950'
+                          ? 'bg-emerald-400 text-zinc-950'
                           : unlocked
-                          ? 'bg-slate-800 hover:bg-slate-700 text-white'
+                          ? 'bg-zinc-100 hover:bg-white text-zinc-950'
+                          : !meetsReq
+                          ? 'bg-zinc-950 text-zinc-500 border border-white/5 cursor-not-allowed'
                           : canAfford
-                          ? 'bg-amber-500 hover:bg-amber-400 text-slate-950'
-                          : 'bg-slate-900 text-slate-600 cursor-not-allowed'
+                          ? 'bg-amber-400 hover:bg-amber-300 text-zinc-950'
+                          : 'bg-zinc-950 text-zinc-500 cursor-not-allowed'
                       }`}
                     >
                       {equipped
                         ? 'Lepas Aksesori'
                         : unlocked
                         ? 'Pasang'
-                        : `Beli (${acc.cost} Koin)`}
+                        : !meetsLevel
+                        ? `Buka di Level ${acc.minLevel}`
+                        : !meetsStars
+                        ? `Butuh ${acc.minStars} ★ Bintang`
+                        : acc.cost === 0
+                        ? 'Klaim Spesial (Gratis)'
+                        : `Beli 🪙 ${acc.cost}`}
                     </button>
                   </div>
                 );
               })}
             </div>
-          </div>
+          )}
+
+          {/* TAB 3: EFEK AURA & JEJAK LANGKAH PARTIKEL */}
+          {activeCategory === 'aura' && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {AURA_ITEMS.map((item) => {
+                const unlocked = unlockedAuras.includes(item.id);
+                const equipped = (profile.aura || 'none') === item.id;
+                const isPreviewing = previewState.aura === item.id;
+                const meetsLevel = !item.minLevel || profile.level >= item.minLevel;
+                const meetsStars = !item.minStars || totalStars >= item.minStars;
+                const meetsReq = meetsLevel && meetsStars;
+                const canAfford = profile.coins >= item.cost && meetsReq;
+
+                return (
+                  <div
+                    key={item.id}
+                    className={`p-3.5 rounded-xl border flex flex-col justify-between ${
+                      equipped
+                        ? 'bg-zinc-900/95 border-emerald-400/60'
+                        : isPreviewing
+                        ? 'bg-zinc-900/80 border-zinc-400'
+                        : 'bg-zinc-900/50 border-white/6'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2.5">
+                        <span
+                          className="w-4 h-4 rounded-full border border-white/20 shrink-0"
+                          style={{ backgroundColor: item.colorHex }}
+                        />
+                        <div>
+                          <div className="text-sm font-semibold text-zinc-100">
+                            {item.name}
+                          </div>
+                          <div className="text-[11px] font-mono-num text-zinc-400 mt-0.5">
+                            {unlocked ? '✓ Sudah Dimiliki' : formatReqBadge(item.cost, item.minLevel, item.minStars)}
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          uiManager.triggerTactileClick(15);
+                          applyTryOnPreview({ aura: item.id }, item.name);
+                        }}
+                        className="px-2 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-[11px] text-zinc-200 cursor-pointer shrink-0"
+                      >
+                        👁 Coba
+                      </button>
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={!unlocked && !canAfford}
+                      onClick={() => {
+                        uiManager.triggerTactileClick(25);
+                        onSelectAura?.(item.id);
+                        applyTryOnPreview({ aura: item.id }, item.name);
+                      }}
+                      className={`mt-3 w-full py-2 rounded-lg text-xs font-semibold cursor-pointer ${
+                        equipped
+                          ? 'bg-emerald-400 text-zinc-950'
+                          : unlocked
+                          ? 'bg-zinc-100 hover:bg-white text-zinc-950'
+                          : !meetsReq
+                          ? 'bg-zinc-950 text-zinc-500 border border-white/5 cursor-not-allowed'
+                          : canAfford
+                          ? 'bg-amber-400 hover:bg-amber-300 text-zinc-950'
+                          : 'bg-zinc-950 text-zinc-500 cursor-not-allowed'
+                      }`}
+                    >
+                      {equipped
+                        ? 'Aura Aktif'
+                        : unlocked
+                        ? 'Pakai Aura'
+                        : !meetsLevel
+                        ? `Buka di Level ${item.minLevel}`
+                        : !meetsStars
+                        ? `Butuh ${item.minStars} ★ Bintang`
+                        : item.cost === 0
+                        ? 'Klaim Spesial (Gratis)'
+                        : `Beli 🪙 ${item.cost}`}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* TAB 4: HEWAN PELIHARAAN PENDAMPING (PET / DRONE KECIL) */}
+          {activeCategory === 'pet' && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {PET_ITEMS.map((item) => {
+                const unlocked = unlockedPets.includes(item.id);
+                const equipped = (profile.pet || 'none') === item.id;
+                const isPreviewing = previewState.pet === item.id;
+                const meetsLevel = !item.minLevel || profile.level >= item.minLevel;
+                const meetsStars = !item.minStars || totalStars >= item.minStars;
+                const meetsReq = meetsLevel && meetsStars;
+                const canAfford = profile.coins >= item.cost && meetsReq;
+
+                return (
+                  <div
+                    key={item.id}
+                    className={`p-3.5 rounded-xl border flex flex-col justify-between ${
+                      equipped
+                        ? 'bg-zinc-900/95 border-emerald-400/60'
+                        : isPreviewing
+                        ? 'bg-zinc-900/80 border-zinc-400'
+                        : 'bg-zinc-900/50 border-white/6'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="text-sm font-semibold text-zinc-100">
+                          {item.name}
+                        </div>
+                        <div className="text-[11px] font-mono-num text-zinc-400 mt-0.5">
+                          {unlocked ? '✓ Pendamping Setia' : formatReqBadge(item.cost, item.minLevel, item.minStars)}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          uiManager.triggerTactileClick(15);
+                          applyTryOnPreview({ pet: item.id }, item.name);
+                        }}
+                        className="px-2 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-[11px] text-zinc-200 cursor-pointer shrink-0"
+                      >
+                        👁 Coba
+                      </button>
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={!unlocked && !canAfford}
+                      onClick={() => {
+                        uiManager.triggerTactileClick(25);
+                        onSelectPet?.(item.id);
+                        applyTryOnPreview({ pet: item.id }, item.name);
+                      }}
+                      className={`mt-3 w-full py-2 rounded-lg text-xs font-semibold cursor-pointer ${
+                        equipped
+                          ? 'bg-emerald-400 text-zinc-950'
+                          : unlocked
+                          ? 'bg-zinc-100 hover:bg-white text-zinc-950'
+                          : !meetsReq
+                          ? 'bg-zinc-950 text-zinc-500 border border-white/5 cursor-not-allowed'
+                          : canAfford
+                          ? 'bg-amber-400 hover:bg-amber-300 text-zinc-950'
+                          : 'bg-zinc-950 text-zinc-500 cursor-not-allowed'
+                      }`}
+                    >
+                      {equipped
+                        ? 'Mendampingi'
+                        : unlocked
+                        ? 'Ajak Pet'
+                        : !meetsLevel
+                        ? `Buka di Level ${item.minLevel}`
+                        : !meetsStars
+                        ? `Butuh ${item.minStars} ★ Bintang`
+                        : item.cost === 0
+                        ? 'Klaim Spesial (Gratis)'
+                        : `Beli 🪙 ${item.cost}`}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* TAB 5: SENJATA / ALAT PERAGA & TEMA WARNA KARAKTER */}
+          {activeCategory === 'prop' && (
+            <div className="space-y-4">
+              <div>
+                <h3 className="text-xs font-semibold text-zinc-300 mb-2">
+                  Senjata & Alat Peraga Tangan
+                </h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  {PROP_WEAPON_ITEMS.map((item) => {
+                    const unlocked = unlockedProps.includes(item.id);
+                    const equipped = (profile.propWeapon || 'none') === item.id;
+                    const isPreviewing = previewState.propWeapon === item.id;
+                    const meetsLevel = !item.minLevel || profile.level >= item.minLevel;
+                    const meetsStars = !item.minStars || totalStars >= item.minStars;
+                    const meetsReq = meetsLevel && meetsStars;
+                    const canAfford = profile.coins >= item.cost && meetsReq;
+
+                    return (
+                      <div
+                        key={item.id}
+                        className={`p-3.5 rounded-xl border flex flex-col justify-between ${
+                          equipped
+                            ? 'bg-zinc-900/95 border-emerald-400/60'
+                            : isPreviewing
+                            ? 'bg-zinc-900/80 border-zinc-400'
+                            : 'bg-zinc-900/50 border-white/6'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <div className="text-sm font-semibold text-zinc-100">
+                              {item.name}
+                            </div>
+                            <div className="text-[11px] font-mono-num text-zinc-400 mt-0.5">
+                              {unlocked ? '✓ Sudah Dimiliki' : formatReqBadge(item.cost, item.minLevel, item.minStars)}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              uiManager.triggerTactileClick(15);
+                              applyTryOnPreview({ propWeapon: item.id }, item.name);
+                            }}
+                            className="px-2 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-[11px] text-zinc-200 cursor-pointer shrink-0"
+                          >
+                            👁 Coba
+                          </button>
+                        </div>
+
+                        <button
+                          type="button"
+                          disabled={!unlocked && !canAfford}
+                          onClick={() => {
+                            uiManager.triggerTactileClick(25);
+                            onSelectPropWeapon?.(item.id);
+                            applyTryOnPreview({ propWeapon: item.id }, item.name);
+                          }}
+                          className={`mt-3 w-full py-2 rounded-lg text-xs font-semibold cursor-pointer ${
+                            equipped
+                              ? 'bg-emerald-400 text-zinc-950'
+                              : unlocked
+                              ? 'bg-zinc-100 hover:bg-white text-zinc-950'
+                              : !meetsReq
+                              ? 'bg-zinc-950 text-zinc-500 border border-white/5 cursor-not-allowed'
+                              : canAfford
+                              ? 'bg-amber-400 hover:bg-amber-300 text-zinc-950'
+                              : 'bg-zinc-950 text-zinc-500 cursor-not-allowed'
+                          }`}
+                        >
+                          {equipped
+                            ? 'Digenggam'
+                            : unlocked
+                            ? 'Pegang Alat'
+                            : !meetsLevel
+                            ? `Buka di Level ${item.minLevel}`
+                            : !meetsStars
+                            ? `Butuh ${item.minStars} ★ Bintang`
+                            : item.cost === 0
+                            ? 'Klaim Spesial (Gratis)'
+                            : `Beli 🪙 ${item.cost}`}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div>
+                <h3 className="text-xs font-semibold text-zinc-300 mb-2">
+                  Tema Warna Karakter
+                </h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  {THEME_COLOR_ITEMS.map((item) => {
+                    const unlocked = unlockedThemes.includes(item.id);
+                    const equipped = (profile.themeColor || 'klasik') === item.id;
+                    const isPreviewing = previewState.themeColor === item.id;
+                    const meetsLevel = !item.minLevel || profile.level >= item.minLevel;
+                    const canAfford = profile.coins >= item.cost && meetsLevel;
+
+                    return (
+                      <div
+                        key={item.id}
+                        className={`p-3.5 rounded-xl border flex flex-col justify-between ${
+                          equipped
+                            ? 'bg-zinc-900/95 border-emerald-400/60'
+                            : isPreviewing
+                            ? 'bg-zinc-900/80 border-zinc-400'
+                            : 'bg-zinc-900/50 border-white/6'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-center gap-2.5">
+                            <span
+                              className="w-4 h-4 rounded-full border border-white/20 shrink-0"
+                              style={{ backgroundColor: item.trimHex }}
+                            />
+                            <div>
+                              <div className="text-sm font-semibold text-zinc-100">
+                                {item.name}
+                              </div>
+                              <div className="text-[11px] font-mono-num text-zinc-400 mt-0.5">
+                                {unlocked ? '✓ Sudah Dimiliki' : formatReqBadge(item.cost, item.minLevel)}
+                              </div>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              uiManager.triggerTactileClick(15);
+                              applyTryOnPreview({ themeColor: item.id }, item.name);
+                            }}
+                            className="px-2 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-[11px] text-zinc-200 cursor-pointer shrink-0"
+                          >
+                            👁 Coba
+                          </button>
+                        </div>
+
+                        <button
+                          type="button"
+                          disabled={!unlocked && !canAfford}
+                          onClick={() => {
+                            uiManager.triggerTactileClick(25);
+                            onSelectThemeColor?.(item.id);
+                            applyTryOnPreview({ themeColor: item.id }, item.name);
+                          }}
+                          className={`mt-3 w-full py-2 rounded-lg text-xs font-semibold cursor-pointer ${
+                            equipped
+                              ? 'bg-emerald-400 text-zinc-950'
+                              : unlocked
+                              ? 'bg-zinc-100 hover:bg-white text-zinc-950'
+                              : !meetsLevel
+                              ? 'bg-zinc-950 text-zinc-500 border border-white/5 cursor-not-allowed'
+                              : canAfford
+                              ? 'bg-amber-400 hover:bg-amber-300 text-zinc-950'
+                              : 'bg-zinc-950 text-zinc-500 cursor-not-allowed'
+                          }`}
+                        >
+                          {equipped
+                            ? 'Tema Aktif'
+                            : unlocked
+                            ? 'Pakai Tema'
+                            : !meetsLevel
+                            ? `Buka di Level ${item.minLevel}`
+                            : item.cost === 0
+                            ? 'Klaim Spesial (Gratis)'
+                            : `Beli 🪙 ${item.cost}`}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
   );
 };
+
 
 // 3. PILIH DUNIA (5 BIOME WORLD SWITCHER MODAL)
 interface BiomeModalProps {
@@ -347,8 +1020,8 @@ export const BiomeModal: React.FC<BiomeModalProps> = ({
       aria-label="Pilih Dunia 3D"
       className="fixed inset-0 z-40 flex items-center justify-center p-4 bg-slate-950/85 pointer-events-auto"
     >
-      <div className="w-full max-w-3xl rounded-2xl bg-slate-900 border border-slate-700 shadow-2xl overflow-hidden">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800">
+      <div className="w-full max-w-3xl rounded-2xl glass-modal overflow-hidden">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-white/15 bg-slate-950/60">
           <div>
             <h2 className="text-xl font-bold text-white font-display">
               Pilih Dunia Biom 3D (5 Dunia)
@@ -359,8 +1032,11 @@ export const BiomeModal: React.FC<BiomeModalProps> = ({
           </div>
           <button
             type="button"
-            onClick={onClose}
-            className="px-3.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold cursor-pointer"
+            onClick={() => {
+              uiManager.triggerTactileClick();
+              onClose();
+            }}
+            className="px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/15 text-slate-200 text-xs font-bold cursor-pointer btn-tactile"
           >
             Tutup
           </button>
@@ -372,14 +1048,12 @@ export const BiomeModal: React.FC<BiomeModalProps> = ({
             return (
               <div
                 key={b.id}
-                className={`p-4 rounded-xl border flex flex-col justify-between ${
-                  active
-                    ? 'bg-slate-800 border-amber-400'
-                    : 'bg-slate-950 border-slate-800'
+                className={`bento-tile p-4 rounded-2xl flex flex-col justify-between ${
+                  active ? 'border-cyan-400 bg-slate-800/90' : ''
                 }`}
               >
                 <div>
-                  <div className="text-xs text-amber-400 font-semibold">
+                  <div className="text-xs text-cyan-400 font-semibold">
                     {b.subtitle}
                   </div>
                   <h3 className="text-lg font-bold text-white font-display mt-0.5">
@@ -392,10 +1066,13 @@ export const BiomeModal: React.FC<BiomeModalProps> = ({
                 <button
                   type="button"
                   onClick={() => {
+                    uiManager.triggerTactileClick(30);
                     onSelectBiome(b.id);
                     onClose();
                   }}
-                  className="mt-4 px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs cursor-pointer self-start"
+                  className={`mt-4 px-4 py-2 rounded-xl font-bold text-xs cursor-pointer self-start ${
+                    active ? 'btn-tactile-amber' : 'btn-tactile-electric'
+                  }`}
                 >
                   {active ? 'Dunia Aktif' : `Teleport ke ${b.name}`}
                 </button>
@@ -644,12 +1321,12 @@ export const TeacherModal: React.FC<TeacherModalProps> = ({
   };
 
   const waShareClassText = [
-    `*TUGAS GAME EDUKASI 3D — EDUVERSE 3D*`,
+    `*TUGAS GAME EDUKASI — EDUZONE*`,
     `Mapel: *${currentPackSnapshot.subject}* (${currentPackSnapshot.grade})`,
     `Judul: *${currentPackSnapshot.title}* (${currentPackSnapshot.questions.length} Soal)`,
-    `Guru: ${currentPackSnapshot.author || 'Guru Eduverse'}`,
+    `Guru: ${currentPackSnapshot.author || 'Guru EDUZONE'}`,
     ``,
-    `Klik link berikut untuk langsung belajar di Ruang Materi & bermain 20 Mini-Game 3D:`,
+    `Klik link berikut untuk langsung belajar di Ruang Materi & bermain 20 Mini-Game EDUZONE:`,
     shareUrl
   ].join('\n');
 

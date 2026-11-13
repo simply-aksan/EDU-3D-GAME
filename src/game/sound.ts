@@ -4,6 +4,8 @@ export class SoundManager {
   private ctx: AudioContext | null = null;
   private isMuted = false;
   private ambientTimer: number | null = null;
+  private currentBiome: BiomeId = 'kota_ilmu';
+  private feverModeActive = false;
 
   private ensureContext(): AudioContext | null {
     if (this.isMuted) return null;
@@ -314,7 +316,43 @@ export class SoundManager {
     }
   }
 
+  public setFeverMode(active: boolean): void {
+    if (this.feverModeActive === active) return;
+    this.feverModeActive = active;
+    if (active) {
+      this.playFeverSurge();
+    }
+    if (this.ambientTimer !== null) {
+      this.startAmbient(this.currentBiome);
+    }
+  }
+
+  public isFeverMode(): boolean {
+    return this.feverModeActive;
+  }
+
+  public playFeverSurge(): void {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const notes = [523.25, 659.25, 783.99, 1046.5, 1318.51];
+    notes.forEach((freq, idx) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'triangle';
+      const t = now + idx * 0.045;
+      osc.frequency.setValueAtTime(freq, t);
+      gain.gain.setValueAtTime(0.14, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.28);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.3);
+    });
+  }
+
   public startAmbient(biome: BiomeId): void {
+    this.currentBiome = biome;
     this.stopAmbient();
     if (this.isMuted || typeof window === 'undefined') return;
 
@@ -328,28 +366,37 @@ export class SoundManager {
 
     const notes = scales[biome] || scales.kota_ilmu;
     let step = 0;
+    const intervalMs = this.feverModeActive ? 720 : 1600;
 
     this.ambientTimer = window.setInterval(() => {
       if (this.isMuted) return;
       const ctx = this.ensureContext();
       if (!ctx || ctx.state !== 'running') return;
       const now = ctx.currentTime;
-      const freq = notes[step % notes.length];
+      const baseFreq = notes[step % notes.length];
+      const freq =
+        this.feverModeActive && step % 2 === 1 ? baseFreq * 1.5 : baseFreq;
       step++;
 
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
-      osc.type = 'sine';
+      osc.type = this.feverModeActive ? 'triangle' : 'sine';
       osc.frequency.setValueAtTime(freq, now);
       gain.gain.setValueAtTime(0.001, now);
-      gain.gain.linearRampToValueAtTime(0.025, now + 0.25);
-      gain.gain.exponentialRampToValueAtTime(0.0008, now + 1.4);
+      gain.gain.linearRampToValueAtTime(
+        this.feverModeActive ? 0.04 : 0.025,
+        now + (this.feverModeActive ? 0.1 : 0.25)
+      );
+      gain.gain.exponentialRampToValueAtTime(
+        0.0008,
+        now + (this.feverModeActive ? 0.65 : 1.4)
+      );
 
       osc.connect(gain);
       gain.connect(ctx.destination);
       osc.start(now);
-      osc.stop(now + 1.45);
-    }, 1600);
+      osc.stop(now + (this.feverModeActive ? 0.68 : 1.45));
+    }, intervalMs);
   }
 
   public stopAmbient(): void {
